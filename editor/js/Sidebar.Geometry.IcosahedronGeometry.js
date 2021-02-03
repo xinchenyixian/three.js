@@ -1,46 +1,48 @@
-/**
- * @author mrdoob / http://mrdoob.com/
- */
+import * as THREE from '../../build/three.module.js';
 
-Sidebar.Geometry.IcosahedronGeometry = function ( signals, object ) {
+import { UIRow, UIText, UIInteger, UINumber } from './libs/ui.js';
 
-	var container = new UI.Panel();
+import { SetGeometryCommand } from './commands/SetGeometryCommand.js';
 
-	var parameters = object.geometry.parameters;
+function GeometryParametersPanel( editor, object ) {
+
+	var strings = editor.strings;
+
+	var signals = editor.signals;
+
+	var container = new UIRow();
+
+	var geometry = object.geometry;
+	var parameters = geometry.parameters;
 
 	// radius
 
-	var radiusRow = new UI.Panel();
-	var radius = new UI.Number( parameters.radius ).onChange( update );
+	var radiusRow = new UIRow();
+	var radius = new UINumber( parameters.radius ).onChange( update );
 
-	radiusRow.add( new UI.Text( 'Radius' ).setWidth( '90px' ) );
+	radiusRow.add( new UIText( strings.getKey( 'sidebar/geometry/icosahedron_geometry/radius' ) ).setWidth( '90px' ) );
 	radiusRow.add( radius );
 
 	container.add( radiusRow );
 
 	// detail
 
-	var detailRow = new UI.Panel();
-	var detail = new UI.Integer( parameters.detail ).setRange( 0, Infinity ).onChange( update );
+	var detailRow = new UIRow();
+	var detail = new UIInteger( parameters.detail ).setRange( 0, Infinity ).onChange( update );
 
-	detailRow.add( new UI.Text( 'Detail' ).setWidth( '90px' ) );
+	detailRow.add( new UIText( strings.getKey( 'sidebar/geometry/icosahedron_geometry/detail' ) ).setWidth( '90px' ) );
 	detailRow.add( detail );
 
 	container.add( detailRow );
-
 
 	//
 
 	function update() {
 
-		object.geometry.dispose();
-
-		object.geometry = new THREE.IcosahedronGeometry(
+		editor.execute( new SetGeometryCommand( editor, object, new THREE.IcosahedronGeometry(
 			radius.getValue(),
 			detail.getValue()
-		);
-
-		object.geometry.computeBoundingSphere();
+		) ) );
 
 		signals.objectChanged.dispatch( object );
 
@@ -49,3 +51,5 @@ Sidebar.Geometry.IcosahedronGeometry = function ( signals, object ) {
 	return container;
 
 }
+
+export { GeometryParametersPanel };

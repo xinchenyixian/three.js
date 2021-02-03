@@ -1,26 +1,31 @@
-/**
- * @author mrdoob / http://mrdoob.com/
- */
+import * as THREE from '../../build/three.module.js';
 
-Sidebar.Geometry = function ( editor ) {
+import { UIPanel, UIRow, UIText, UIInput, UIButton, UISpan } from './libs/ui.js';
+
+import { SetGeometryValueCommand } from './commands/SetGeometryValueCommand.js';
+
+import { SidebarGeometryBufferGeometry } from './Sidebar.Geometry.BufferGeometry.js';
+import { SidebarGeometryModifiers } from './Sidebar.Geometry.Modifiers.js';
+
+import { VertexNormalsHelper } from '../../examples/jsm/helpers/VertexNormalsHelper.js';
+
+function SidebarGeometry( editor ) {
+
+	var strings = editor.strings;
 
 	var signals = editor.signals;
 
-	var container = new UI.CollapsiblePanel();
-	container.setCollapsed( editor.config.getKey( 'ui/sidebar/geometry/collapsed' ) );
-	container.onCollapsedChange( function ( boolean ) {
-
-		editor.config.setKey( 'ui/sidebar/geometry/collapsed', boolean );
-
-	} );
+	var container = new UIPanel();
+	container.setBorderTop( '0' );
 	container.setDisplay( 'none' );
+	container.setPaddingTop( '20px' );
 
-	var geometryType = new UI.Text().setTextTransform( 'uppercase' );
-	container.addStatic( geometryType );
+	var currentGeometryType = null;
 
 	// Actions
 
-	var objectActions = new UI.Select().setPosition('absolute').setRight( '8px' ).setFontSize( '11px' );
+	/*
+	var objectActions = new UISelect().setPosition( 'absolute' ).setRight( '8px' ).setFontSize( '11px' );
 	objectActions.setOptions( {
 
 		'Actions': 'Actions',
@@ -49,20 +54,19 @@ Sidebar.Geometry = function ( editor ) {
 
 				var offset = geometry.center();
 
-				object.position.sub( offset );
+				var newPosition = object.position.clone();
+				newPosition.sub( offset );
+				editor.execute( new SetPositionCommand( editor, object, newPosition ) );
 
-				editor.signals.geometryChanged.dispatch( geometry );
-				editor.signals.objectChanged.dispatch( object );
+				editor.signals.geometryChanged.dispatch( object );
 
 				break;
 
 			case 'Convert':
 
-				if ( geometry instanceof THREE.Geometry ) {
+				if ( geometry && geometry.isGeometry ) {
 
-					object.geometry = new THREE.BufferGeometry().fromGeometry( geometry );
-
-					signals.geometryChanged.dispatch( object );
+					editor.execute( new SetGeometryCommand( editor, object, new THREE.BufferGeometry().fromGeometry( geometry ) ) );
 
 				}
 
@@ -70,14 +74,16 @@ Sidebar.Geometry = function ( editor ) {
 
 			case 'Flatten':
 
-				geometry.applyMatrix( object.matrix );
+				var newGeometry = geometry.clone();
+				newGeometry.uuid = geometry.uuid;
+				newGeometry.applyMatrix( object.matrix );
 
-				object.position.set( 0, 0, 0 );
-				object.rotation.set( 0, 0, 0 );
-				object.scale.set( 1, 1, 1 );
+				var cmds = [ new SetGeometryCommand( editor, object, newGeometry ),
+					new SetPositionCommand( editor, object, new THREE.Vector3( 0, 0, 0 ) ),
+					new SetRotationCommand( editor, object, new THREE.Euler( 0, 0, 0 ) ),
+					new SetScaleCommand( editor, object, new THREE.Vector3( 1, 1, 1 ) ) ];
 
-				editor.signals.geometryChanged.dispatch( geometry );
-				editor.signals.objectChanged.dispatch( object );
+				editor.execute( new MultiCmdsCommand( editor, cmds ), 'Flatten Geometry' );
 
 				break;
 
@@ -85,26 +91,33 @@ Sidebar.Geometry = function ( editor ) {
 
 		this.setValue( 'Actions' );
 
-		signals.objectChanged.dispatch( object );
-
 	} );
 	container.addStatic( objectActions );
+	*/
 
-	container.add( new UI.Break() );
+	// type
+
+	var geometryTypeRow = new UIRow();
+	var geometryType = new UIText();
+
+	geometryTypeRow.add( new UIText( strings.getKey( 'sidebar/geometry/type' ) ).setWidth( '90px' ) );
+	geometryTypeRow.add( geometryType );
+
+	container.add( geometryTypeRow );
 
 	// uuid
 
-	var geometryUUIDRow = new UI.Panel();
-	var geometryUUID = new UI.Input().setWidth( '115px' ).setFontSize( '12px' ).setDisabled( true );
-	var geometryUUIDRenew = new UI.Button( '⟳' ).setMarginLeft( '7px' ).onClick( function () {
+	var geometryUUIDRow = new UIRow();
+	var geometryUUID = new UIInput().setWidth( '102px' ).setFontSize( '12px' ).setDisabled( true );
+	var geometryUUIDRenew = new UIButton( strings.getKey( 'sidebar/geometry/new' ) ).setMarginLeft( '7px' ).onClick( function () {
 
-		geometryUUID.setValue( THREE.Math.generateUUID() );
+		geometryUUID.setValue( THREE.MathUtils.generateUUID() );
 
-		editor.selected.geometry.uuid = geometryUUID.getValue();
+		editor.execute( new SetGeometryValueCommand( editor, editor.selected, 'uuid', geometryUUID.getValue() ) );
 
 	} );
 
-	geometryUUIDRow.add( new UI.Text( 'UUID' ).setWidth( '90px' ) );
+	geometryUUIDRow.add( new UIText( strings.getKey( 'sidebar/geometry/uuid' ) ).setWidth( '90px' ) );
 	geometryUUIDRow.add( geometryUUID );
 	geometryUUIDRow.add( geometryUUIDRenew );
 
@@ -112,35 +125,61 @@ Sidebar.Geometry = function ( editor ) {
 
 	// name
 
-	var geometryNameRow = new UI.Panel();
-	var geometryName = new UI.Input().setWidth( '150px' ).setFontSize( '12px' ).onChange( function () {
+	var geometryNameRow = new UIRow();
+	var geometryName = new UIInput().setWidth( '150px' ).setFontSize( '12px' ).onChange( function () {
 
-		editor.setGeometryName( editor.selected.geometry, geometryName.getValue() );
+		editor.execute( new SetGeometryValueCommand( editor, editor.selected, 'name', geometryName.getValue() ) );
 
 	} );
 
-	geometryNameRow.add( new UI.Text( 'Name' ).setWidth( '90px' ) );
+	geometryNameRow.add( new UIText( strings.getKey( 'sidebar/geometry/name' ) ).setWidth( '90px' ) );
 	geometryNameRow.add( geometryName );
 
 	container.add( geometryNameRow );
 
-	// geometry
+	// parameters
 
-	container.add( new Sidebar.Geometry.Geometry( signals ) );
+	var parameters = new UISpan();
+	container.add( parameters );
 
 	// buffergeometry
 
-	container.add( new Sidebar.Geometry.BufferGeometry( signals ) );
+	container.add( new SidebarGeometryBufferGeometry( editor ) );
 
-	// parameters
+	// size
 
-	var parameters = new UI.Panel();
-	container.add( parameters );
+	var geometryBoundingSphere = new UIText();
 
+	container.add( new UIText( strings.getKey( 'sidebar/geometry/bounds' ) ).setWidth( '90px' ) );
+	container.add( geometryBoundingSphere );
 
-	//
+	// Helpers
 
-	function build() {
+	var helpersRow = new UIRow().setMarginTop( '16px' ).setPaddingLeft( '90px' );
+	container.add( helpersRow );
+
+	var vertexNormalsButton = new UIButton( strings.getKey( 'sidebar/geometry/show_vertex_normals' ) );
+	vertexNormalsButton.onClick( function () {
+
+		var object = editor.selected;
+
+		if ( editor.helpers[ object.id ] === undefined ) {
+
+			var helper = new VertexNormalsHelper( object );
+			editor.addHelper( object, helper );
+
+		} else {
+
+			editor.removeHelper( object );
+
+		}
+
+		signals.sceneGraphChanged.dispatch();
+
+	} );
+	helpersRow.add( vertexNormalsButton );
+
+	async function build() {
 
 		var object = editor.selected;
 
@@ -157,17 +196,29 @@ Sidebar.Geometry = function ( editor ) {
 
 			//
 
-			parameters.clear();
+			if ( currentGeometryType !== geometry.type ) {
 
-			if ( geometry.type === 'BufferGeometry' || geometry.type === 'Geometry' ) {
+				parameters.clear();
 
-				parameters.add( new Sidebar.Geometry.Modifiers( signals, object ) );
+				if ( geometry.type === 'BufferGeometry' ) {
 
-			} else if ( Sidebar.Geometry[ geometry.type ] !== undefined ) {
+					parameters.add( new SidebarGeometryModifiers( editor, object ) );
 
-				parameters.add( new Sidebar.Geometry[ geometry.type ]( signals, object ) );
+				} else {
+
+					var { GeometryParametersPanel } = await import( `./Sidebar.Geometry.${ geometry.type }.js` );
+
+					parameters.add( new GeometryParametersPanel( editor, object ) );
+
+				}
+
+				currentGeometryType = geometry.type;
 
 			}
+
+			if ( geometry.boundingSphere === null ) geometry.computeBoundingSphere();
+
+			geometryBoundingSphere.setValue( Math.floor( geometry.boundingSphere.radius * 1000 ) / 1000 );
 
 		} else {
 
@@ -177,9 +228,18 @@ Sidebar.Geometry = function ( editor ) {
 
 	}
 
-	signals.objectSelected.add( build );
+	signals.objectSelected.add( function () {
+
+		currentGeometryType = null;
+
+		build();
+
+	} );
+
 	signals.geometryChanged.add( build );
 
 	return container;
 
 }
+
+export { SidebarGeometry };

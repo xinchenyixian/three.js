@@ -1,365 +1,652 @@
-/**
-* @author mrdoob / http://mrdoob.com/
-*/
+import { NotEqualDepth, GreaterDepth, GreaterEqualDepth, EqualDepth, LessEqualDepth, LessDepth, AlwaysDepth, NeverDepth, CullFaceFront, CullFaceBack, CullFaceNone, DoubleSide, BackSide, CustomBlending, MultiplyBlending, SubtractiveBlending, AdditiveBlending, NoBlending, NormalBlending, AddEquation, SubtractEquation, ReverseSubtractEquation, MinEquation, MaxEquation, ZeroFactor, OneFactor, SrcColorFactor, SrcAlphaFactor, SrcAlphaSaturateFactor, DstColorFactor, DstAlphaFactor, OneMinusSrcColorFactor, OneMinusSrcAlphaFactor, OneMinusDstColorFactor, OneMinusDstAlphaFactor } from '../../constants.js';
+import { Vector4 } from '../../math/Vector4.js';
 
-THREE.WebGLState = function ( gl, extensions, paramThreeToGL ) {
+function WebGLState( gl, extensions, capabilities ) {
 
-	var _this = this;
+	const isWebGL2 = capabilities.isWebGL2;
 
-	var newAttributes = new Uint8Array( 16 );
-	var enabledAttributes = new Uint8Array( 16 );
-	var attributeDivisors = new Uint8Array( 16 );
+	function ColorBuffer() {
 
-	var capabilities = {};
+		let locked = false;
 
-	var compressedTextureFormats = null;
+		const color = new Vector4();
+		let currentColorMask = null;
+		const currentColorClear = new Vector4( 0, 0, 0, 0 );
 
-	var currentBlending = null;
-	var currentBlendEquation = null;
-	var currentBlendSrc = null;
-	var currentBlendDst = null;
-	var currentBlendEquationAlpha = null;
-	var currentBlendSrcAlpha = null;
-	var currentBlendDstAlpha = null;
+		return {
 
-	var currentDepthFunc = null;
-	var currentDepthWrite = null;
+			setMask: function ( colorMask ) {
 
-	var currentColorWrite = null;
+				if ( currentColorMask !== colorMask && ! locked ) {
 
-	var currentFlipSided = null;
+					gl.colorMask( colorMask, colorMask, colorMask, colorMask );
+					currentColorMask = colorMask;
 
-	var currentLineWidth = null;
+				}
 
-	var currentPolygonOffsetFactor = null;
-	var currentPolygonOffsetUnits = null;
+			},
 
-	var maxTextures = gl.getParameter( gl.MAX_TEXTURE_IMAGE_UNITS );
+			setLocked: function ( lock ) {
 
-	var currentTextureSlot = undefined;
-	var currentBoundTextures = {};
+				locked = lock;
 
-	this.init = function () {
+			},
 
-		gl.clearColor( 0, 0, 0, 1 );
-		gl.clearDepth( 1 );
-		gl.clearStencil( 0 );
+			setClear: function ( r, g, b, a, premultipliedAlpha ) {
 
-		this.enable( gl.DEPTH_TEST );
-		gl.depthFunc( gl.LEQUAL );
+				if ( premultipliedAlpha === true ) {
 
-		gl.frontFace( gl.CCW );
-		gl.cullFace( gl.BACK );
-		this.enable( gl.CULL_FACE );
+					r *= a; g *= a; b *= a;
 
-		this.enable( gl.BLEND );
-		gl.blendEquation( gl.FUNC_ADD );
-		gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+				}
 
-	};
+				color.set( r, g, b, a );
 
-	this.initAttributes = function () {
+				if ( currentColorClear.equals( color ) === false ) {
 
-		for ( var i = 0, l = newAttributes.length; i < l; i ++ ) {
+					gl.clearColor( r, g, b, a );
+					currentColorClear.copy( color );
 
-			newAttributes[ i ] = 0;
+				}
 
-		}
+			},
 
-	};
+			reset: function () {
 
-	this.enableAttribute = function ( attribute ) {
+				locked = false;
 
-		newAttributes[ attribute ] = 1;
-
-		if ( enabledAttributes[ attribute ] === 0 ) {
-
-			gl.enableVertexAttribArray( attribute );
-			enabledAttributes[ attribute ] = 1;
-
-		}
-
-		if ( attributeDivisors[ attribute ] !== 0 ) {
-
-			var extension = extensions.get( 'ANGLE_instanced_arrays' );
-
-			extension.vertexAttribDivisorANGLE( attribute, 0 );
-			attributeDivisors[ attribute ] = 0;
-
-		}
-
-	};
-
-	this.enableAttributeAndDivisor = function ( attribute, meshPerAttribute, extension ) {
-
-		newAttributes[ attribute ] = 1;
-
-		if ( enabledAttributes[ attribute ] === 0 ) {
-
-			gl.enableVertexAttribArray( attribute );
-			enabledAttributes[ attribute ] = 1;
-
-		}
-
-		if ( attributeDivisors[ attribute ] !== meshPerAttribute ) {
-
-			extension.vertexAttribDivisorANGLE( attribute, meshPerAttribute );
-			attributeDivisors[ attribute ] = meshPerAttribute;
-
-		}
-
-	};
-
-	this.disableUnusedAttributes = function () {
-
-		for ( var i = 0, l = enabledAttributes.length; i < l; i ++ ) {
-
-			if ( enabledAttributes[ i ] !== newAttributes[ i ] ) {
-
-				gl.disableVertexAttribArray( i );
-				enabledAttributes[ i ] = 0;
+				currentColorMask = null;
+				currentColorClear.set( - 1, 0, 0, 0 ); // set to invalid state
 
 			}
 
+		};
+
+	}
+
+	function DepthBuffer() {
+
+		let locked = false;
+
+		let currentDepthMask = null;
+		let currentDepthFunc = null;
+		let currentDepthClear = null;
+
+		return {
+
+			setTest: function ( depthTest ) {
+
+				if ( depthTest ) {
+
+					enable( gl.DEPTH_TEST );
+
+				} else {
+
+					disable( gl.DEPTH_TEST );
+
+				}
+
+			},
+
+			setMask: function ( depthMask ) {
+
+				if ( currentDepthMask !== depthMask && ! locked ) {
+
+					gl.depthMask( depthMask );
+					currentDepthMask = depthMask;
+
+				}
+
+			},
+
+			setFunc: function ( depthFunc ) {
+
+				if ( currentDepthFunc !== depthFunc ) {
+
+					if ( depthFunc ) {
+
+						switch ( depthFunc ) {
+
+							case NeverDepth:
+
+								gl.depthFunc( gl.NEVER );
+								break;
+
+							case AlwaysDepth:
+
+								gl.depthFunc( gl.ALWAYS );
+								break;
+
+							case LessDepth:
+
+								gl.depthFunc( gl.LESS );
+								break;
+
+							case LessEqualDepth:
+
+								gl.depthFunc( gl.LEQUAL );
+								break;
+
+							case EqualDepth:
+
+								gl.depthFunc( gl.EQUAL );
+								break;
+
+							case GreaterEqualDepth:
+
+								gl.depthFunc( gl.GEQUAL );
+								break;
+
+							case GreaterDepth:
+
+								gl.depthFunc( gl.GREATER );
+								break;
+
+							case NotEqualDepth:
+
+								gl.depthFunc( gl.NOTEQUAL );
+								break;
+
+							default:
+
+								gl.depthFunc( gl.LEQUAL );
+
+						}
+
+					} else {
+
+						gl.depthFunc( gl.LEQUAL );
+
+					}
+
+					currentDepthFunc = depthFunc;
+
+				}
+
+			},
+
+			setLocked: function ( lock ) {
+
+				locked = lock;
+
+			},
+
+			setClear: function ( depth ) {
+
+				if ( currentDepthClear !== depth ) {
+
+					gl.clearDepth( depth );
+					currentDepthClear = depth;
+
+				}
+
+			},
+
+			reset: function () {
+
+				locked = false;
+
+				currentDepthMask = null;
+				currentDepthFunc = null;
+				currentDepthClear = null;
+
+			}
+
+		};
+
+	}
+
+	function StencilBuffer() {
+
+		let locked = false;
+
+		let currentStencilMask = null;
+		let currentStencilFunc = null;
+		let currentStencilRef = null;
+		let currentStencilFuncMask = null;
+		let currentStencilFail = null;
+		let currentStencilZFail = null;
+		let currentStencilZPass = null;
+		let currentStencilClear = null;
+
+		return {
+
+			setTest: function ( stencilTest ) {
+
+				if ( ! locked ) {
+
+					if ( stencilTest ) {
+
+						enable( gl.STENCIL_TEST );
+
+					} else {
+
+						disable( gl.STENCIL_TEST );
+
+					}
+
+				}
+
+			},
+
+			setMask: function ( stencilMask ) {
+
+				if ( currentStencilMask !== stencilMask && ! locked ) {
+
+					gl.stencilMask( stencilMask );
+					currentStencilMask = stencilMask;
+
+				}
+
+			},
+
+			setFunc: function ( stencilFunc, stencilRef, stencilMask ) {
+
+				if ( currentStencilFunc !== stencilFunc ||
+				     currentStencilRef !== stencilRef ||
+				     currentStencilFuncMask !== stencilMask ) {
+
+					gl.stencilFunc( stencilFunc, stencilRef, stencilMask );
+
+					currentStencilFunc = stencilFunc;
+					currentStencilRef = stencilRef;
+					currentStencilFuncMask = stencilMask;
+
+				}
+
+			},
+
+			setOp: function ( stencilFail, stencilZFail, stencilZPass ) {
+
+				if ( currentStencilFail !== stencilFail ||
+				     currentStencilZFail !== stencilZFail ||
+				     currentStencilZPass !== stencilZPass ) {
+
+					gl.stencilOp( stencilFail, stencilZFail, stencilZPass );
+
+					currentStencilFail = stencilFail;
+					currentStencilZFail = stencilZFail;
+					currentStencilZPass = stencilZPass;
+
+				}
+
+			},
+
+			setLocked: function ( lock ) {
+
+				locked = lock;
+
+			},
+
+			setClear: function ( stencil ) {
+
+				if ( currentStencilClear !== stencil ) {
+
+					gl.clearStencil( stencil );
+					currentStencilClear = stencil;
+
+				}
+
+			},
+
+			reset: function () {
+
+				locked = false;
+
+				currentStencilMask = null;
+				currentStencilFunc = null;
+				currentStencilRef = null;
+				currentStencilFuncMask = null;
+				currentStencilFail = null;
+				currentStencilZFail = null;
+				currentStencilZPass = null;
+				currentStencilClear = null;
+
+			}
+
+		};
+
+	}
+
+	//
+
+	const colorBuffer = new ColorBuffer();
+	const depthBuffer = new DepthBuffer();
+	const stencilBuffer = new StencilBuffer();
+
+	let enabledCapabilities = {};
+
+	let currentProgram = null;
+
+	let currentBlendingEnabled = null;
+	let currentBlending = null;
+	let currentBlendEquation = null;
+	let currentBlendSrc = null;
+	let currentBlendDst = null;
+	let currentBlendEquationAlpha = null;
+	let currentBlendSrcAlpha = null;
+	let currentBlendDstAlpha = null;
+	let currentPremultipledAlpha = false;
+
+	let currentFlipSided = null;
+	let currentCullFace = null;
+
+	let currentLineWidth = null;
+
+	let currentPolygonOffsetFactor = null;
+	let currentPolygonOffsetUnits = null;
+
+	const maxTextures = gl.getParameter( gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS );
+
+	let lineWidthAvailable = false;
+	let version = 0;
+	const glVersion = gl.getParameter( gl.VERSION );
+
+	if ( glVersion.indexOf( 'WebGL' ) !== - 1 ) {
+
+		version = parseFloat( /^WebGL (\d)/.exec( glVersion )[ 1 ] );
+		lineWidthAvailable = ( version >= 1.0 );
+
+	} else if ( glVersion.indexOf( 'OpenGL ES' ) !== - 1 ) {
+
+		version = parseFloat( /^OpenGL ES (\d)/.exec( glVersion )[ 1 ] );
+		lineWidthAvailable = ( version >= 2.0 );
+
+	}
+
+	let currentTextureSlot = null;
+	let currentBoundTextures = {};
+
+	const currentScissor = new Vector4();
+	const currentViewport = new Vector4();
+
+	function createTexture( type, target, count ) {
+
+		const data = new Uint8Array( 4 ); // 4 is required to match default unpack alignment of 4.
+		const texture = gl.createTexture();
+
+		gl.bindTexture( type, texture );
+		gl.texParameteri( type, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+		gl.texParameteri( type, gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+
+		for ( let i = 0; i < count; i ++ ) {
+
+			gl.texImage2D( target + i, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data );
+
 		}
 
-	};
+		return texture;
 
-	this.enable = function ( id ) {
+	}
 
-		if ( capabilities[ id ] !== true ) {
+	const emptyTextures = {};
+	emptyTextures[ gl.TEXTURE_2D ] = createTexture( gl.TEXTURE_2D, gl.TEXTURE_2D, 1 );
+	emptyTextures[ gl.TEXTURE_CUBE_MAP ] = createTexture( gl.TEXTURE_CUBE_MAP, gl.TEXTURE_CUBE_MAP_POSITIVE_X, 6 );
+
+	// init
+
+	colorBuffer.setClear( 0, 0, 0, 1 );
+	depthBuffer.setClear( 1 );
+	stencilBuffer.setClear( 0 );
+
+	enable( gl.DEPTH_TEST );
+	depthBuffer.setFunc( LessEqualDepth );
+
+	setFlipSided( false );
+	setCullFace( CullFaceBack );
+	enable( gl.CULL_FACE );
+
+	setBlending( NoBlending );
+
+	//
+
+	function enable( id ) {
+
+		if ( enabledCapabilities[ id ] !== true ) {
 
 			gl.enable( id );
-			capabilities[ id ] = true;
+			enabledCapabilities[ id ] = true;
 
 		}
 
-	};
+	}
 
-	this.disable = function ( id ) {
+	function disable( id ) {
 
-		if ( capabilities[ id ] !== false ) {
+		if ( enabledCapabilities[ id ] !== false ) {
 
 			gl.disable( id );
-			capabilities[ id ] = false;
+			enabledCapabilities[ id ] = false;
 
 		}
 
+	}
+
+	function useProgram( program ) {
+
+		if ( currentProgram !== program ) {
+
+			gl.useProgram( program );
+
+			currentProgram = program;
+
+			return true;
+
+		}
+
+		return false;
+
+	}
+
+	const equationToGL = {
+		[ AddEquation ]: gl.FUNC_ADD,
+		[ SubtractEquation ]: gl.FUNC_SUBTRACT,
+		[ ReverseSubtractEquation ]: gl.FUNC_REVERSE_SUBTRACT
 	};
 
-	this.getCompressedTextureFormats = function () {
+	if ( isWebGL2 ) {
 
-		if ( compressedTextureFormats === null ) {
+		equationToGL[ MinEquation ] = gl.MIN;
+		equationToGL[ MaxEquation ] = gl.MAX;
 
-			compressedTextureFormats = [];
+	} else {
 
-			if ( extensions.get( 'WEBGL_compressed_texture_pvrtc' ) ||
-			     extensions.get( 'WEBGL_compressed_texture_s3tc' ) ) {
+		const extension = extensions.get( 'EXT_blend_minmax' );
 
-				var formats = gl.getParameter( gl.COMPRESSED_TEXTURE_FORMATS );
+		if ( extension !== null ) {
 
-				for ( var i = 0; i < formats.length; i ++ ) {
+			equationToGL[ MinEquation ] = extension.MIN_EXT;
+			equationToGL[ MaxEquation ] = extension.MAX_EXT;
 
-					compressedTextureFormats.push( formats[ i ] );
+		}
+
+	}
+
+	const factorToGL = {
+		[ ZeroFactor ]: gl.ZERO,
+		[ OneFactor ]: gl.ONE,
+		[ SrcColorFactor ]: gl.SRC_COLOR,
+		[ SrcAlphaFactor ]: gl.SRC_ALPHA,
+		[ SrcAlphaSaturateFactor ]: gl.SRC_ALPHA_SATURATE,
+		[ DstColorFactor ]: gl.DST_COLOR,
+		[ DstAlphaFactor ]: gl.DST_ALPHA,
+		[ OneMinusSrcColorFactor ]: gl.ONE_MINUS_SRC_COLOR,
+		[ OneMinusSrcAlphaFactor ]: gl.ONE_MINUS_SRC_ALPHA,
+		[ OneMinusDstColorFactor ]: gl.ONE_MINUS_DST_COLOR,
+		[ OneMinusDstAlphaFactor ]: gl.ONE_MINUS_DST_ALPHA
+	};
+
+	function setBlending( blending, blendEquation, blendSrc, blendDst, blendEquationAlpha, blendSrcAlpha, blendDstAlpha, premultipliedAlpha ) {
+
+		if ( blending === NoBlending ) {
+
+			if ( currentBlendingEnabled ) {
+
+				disable( gl.BLEND );
+				currentBlendingEnabled = false;
+
+			}
+
+			return;
+
+		}
+
+		if ( ! currentBlendingEnabled ) {
+
+			enable( gl.BLEND );
+			currentBlendingEnabled = true;
+
+		}
+
+		if ( blending !== CustomBlending ) {
+
+			if ( blending !== currentBlending || premultipliedAlpha !== currentPremultipledAlpha ) {
+
+				if ( currentBlendEquation !== AddEquation || currentBlendEquationAlpha !== AddEquation ) {
+
+					gl.blendEquation( gl.FUNC_ADD );
+
+					currentBlendEquation = AddEquation;
+					currentBlendEquationAlpha = AddEquation;
 
 				}
 
-			}
+				if ( premultipliedAlpha ) {
 
-		}
+					switch ( blending ) {
 
-		return compressedTextureFormats;
+						case NormalBlending:
+							gl.blendFuncSeparate( gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA );
+							break;
 
-	};
+						case AdditiveBlending:
+							gl.blendFunc( gl.ONE, gl.ONE );
+							break;
 
-	this.setBlending = function ( blending, blendEquation, blendSrc, blendDst, blendEquationAlpha, blendSrcAlpha, blendDstAlpha ) {
+						case SubtractiveBlending:
+							gl.blendFuncSeparate( gl.ZERO, gl.ZERO, gl.ONE_MINUS_SRC_COLOR, gl.ONE_MINUS_SRC_ALPHA );
+							break;
 
-		if ( blending !== currentBlending ) {
+						case MultiplyBlending:
+							gl.blendFuncSeparate( gl.ZERO, gl.SRC_COLOR, gl.ZERO, gl.SRC_ALPHA );
+							break;
 
-			if ( blending === THREE.NoBlending ) {
+						default:
+							console.error( 'THREE.WebGLState: Invalid blending: ', blending );
+							break;
 
-				this.disable( gl.BLEND );
+					}
 
-			} else if ( blending === THREE.AdditiveBlending ) {
+				} else {
 
-				this.enable( gl.BLEND );
-				gl.blendEquation( gl.FUNC_ADD );
-				gl.blendFunc( gl.SRC_ALPHA, gl.ONE );
+					switch ( blending ) {
 
-			} else if ( blending === THREE.SubtractiveBlending ) {
+						case NormalBlending:
+							gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA );
+							break;
 
-				// TODO: Find blendFuncSeparate() combination
+						case AdditiveBlending:
+							gl.blendFunc( gl.SRC_ALPHA, gl.ONE );
+							break;
 
-				this.enable( gl.BLEND );
-				gl.blendEquation( gl.FUNC_ADD );
-				gl.blendFunc( gl.ZERO, gl.ONE_MINUS_SRC_COLOR );
+						case SubtractiveBlending:
+							gl.blendFunc( gl.ZERO, gl.ONE_MINUS_SRC_COLOR );
+							break;
 
-			} else if ( blending === THREE.MultiplyBlending ) {
+						case MultiplyBlending:
+							gl.blendFunc( gl.ZERO, gl.SRC_COLOR );
+							break;
 
-				// TODO: Find blendFuncSeparate() combination
+						default:
+							console.error( 'THREE.WebGLState: Invalid blending: ', blending );
+							break;
 
-				this.enable( gl.BLEND );
-				gl.blendEquation( gl.FUNC_ADD );
-				gl.blendFunc( gl.ZERO, gl.SRC_COLOR );
-
-			} else if ( blending === THREE.CustomBlending ) {
-
-				this.enable( gl.BLEND );
-
-			} else {
-
-				this.enable( gl.BLEND );
-				gl.blendEquationSeparate( gl.FUNC_ADD, gl.FUNC_ADD );
-				gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA );
-
-			}
-
-			currentBlending = blending;
-
-		}
-
-		if ( blending === THREE.CustomBlending ) {
-
-			blendEquationAlpha = blendEquationAlpha || blendEquation;
-			blendSrcAlpha = blendSrcAlpha || blendSrc;
-			blendDstAlpha = blendDstAlpha || blendDst;
-
-			if ( blendEquation !== currentBlendEquation || blendEquationAlpha !== currentBlendEquationAlpha ) {
-
-				gl.blendEquationSeparate( paramThreeToGL( blendEquation ), paramThreeToGL( blendEquationAlpha ) );
-
-				currentBlendEquation = blendEquation;
-				currentBlendEquationAlpha = blendEquationAlpha;
-
-			}
-
-			if ( blendSrc !== currentBlendSrc || blendDst !== currentBlendDst || blendSrcAlpha !== currentBlendSrcAlpha || blendDstAlpha !== currentBlendDstAlpha ) {
-
-				gl.blendFuncSeparate( paramThreeToGL( blendSrc ), paramThreeToGL( blendDst ), paramThreeToGL( blendSrcAlpha ), paramThreeToGL( blendDstAlpha ) );
-
-				currentBlendSrc = blendSrc;
-				currentBlendDst = blendDst;
-				currentBlendSrcAlpha = blendSrcAlpha;
-				currentBlendDstAlpha = blendDstAlpha;
-
-			}
-
-		} else {
-
-			currentBlendEquation = null;
-			currentBlendSrc = null;
-			currentBlendDst = null;
-			currentBlendEquationAlpha = null;
-			currentBlendSrcAlpha = null;
-			currentBlendDstAlpha = null;
-
-		}
-
-	};
-
-	this.setDepthFunc = function ( depthFunc ) {
-
-		if ( currentDepthFunc !== depthFunc ) {
-
-			if ( depthFunc ) {
-
-				switch ( depthFunc ) {
-
-					case THREE.NeverDepth:
-
-						gl.depthFunc( gl.NEVER );
-						break;
-
-					case THREE.AlwaysDepth:
-
-						gl.depthFunc( gl.ALWAYS );
-						break;
-
-					case THREE.LessDepth:
-
-						gl.depthFunc( gl.LESS );
-						break;
-
-					case THREE.LessEqualDepth:
-
-						gl.depthFunc( gl.LEQUAL );
-						break;
-
-					case THREE.EqualDepth:
-
-						gl.depthFunc( gl.EQUAL );
-						break;
-
-					case THREE.GreaterEqualDepth:
-
-						gl.depthFunc( gl.GEQUAL );
-						break;
-
-					case THREE.GreaterDepth:
-
-						gl.depthFunc( gl.GREATER );
-						break;
-
-					case THREE.NotEqualDepth:
-
-						gl.depthFunc( gl.NOTEQUAL );
-						break;
-
-					default:
-
-						gl.depthFunc( gl.LEQUAL );
+					}
 
 				}
 
-			} else {
+				currentBlendSrc = null;
+				currentBlendDst = null;
+				currentBlendSrcAlpha = null;
+				currentBlendDstAlpha = null;
 
-				gl.depthFunc( gl.LEQUAL );
+				currentBlending = blending;
+				currentPremultipledAlpha = premultipliedAlpha;
 
 			}
 
-			currentDepthFunc = depthFunc;
+			return;
 
 		}
 
-	};
+		// custom blending
 
-	this.setDepthTest = function ( depthTest ) {
+		blendEquationAlpha = blendEquationAlpha || blendEquation;
+		blendSrcAlpha = blendSrcAlpha || blendSrc;
+		blendDstAlpha = blendDstAlpha || blendDst;
 
-		if ( depthTest ) {
+		if ( blendEquation !== currentBlendEquation || blendEquationAlpha !== currentBlendEquationAlpha ) {
 
-			this.enable( gl.DEPTH_TEST );
+			gl.blendEquationSeparate( equationToGL[ blendEquation ], equationToGL[ blendEquationAlpha ] );
 
-		} else {
-
-			this.disable( gl.DEPTH_TEST );
-
-		}
-
-	};
-
-	this.setDepthWrite = function ( depthWrite ) {
-
-		if ( currentDepthWrite !== depthWrite ) {
-
-			gl.depthMask( depthWrite );
-			currentDepthWrite = depthWrite;
+			currentBlendEquation = blendEquation;
+			currentBlendEquationAlpha = blendEquationAlpha;
 
 		}
 
-	};
+		if ( blendSrc !== currentBlendSrc || blendDst !== currentBlendDst || blendSrcAlpha !== currentBlendSrcAlpha || blendDstAlpha !== currentBlendDstAlpha ) {
 
-	this.setColorWrite = function ( colorWrite ) {
+			gl.blendFuncSeparate( factorToGL[ blendSrc ], factorToGL[ blendDst ], factorToGL[ blendSrcAlpha ], factorToGL[ blendDstAlpha ] );
 
-		if ( currentColorWrite !== colorWrite ) {
-
-			gl.colorMask( colorWrite, colorWrite, colorWrite, colorWrite );
-			currentColorWrite = colorWrite;
+			currentBlendSrc = blendSrc;
+			currentBlendDst = blendDst;
+			currentBlendSrcAlpha = blendSrcAlpha;
+			currentBlendDstAlpha = blendDstAlpha;
 
 		}
 
-	};
+		currentBlending = blending;
+		currentPremultipledAlpha = null;
 
-	this.setFlipSided = function ( flipSided ) {
+	}
+
+	function setMaterial( material, frontFaceCW ) {
+
+		material.side === DoubleSide
+			? disable( gl.CULL_FACE )
+			: enable( gl.CULL_FACE );
+
+		let flipSided = ( material.side === BackSide );
+		if ( frontFaceCW ) flipSided = ! flipSided;
+
+		setFlipSided( flipSided );
+
+		( material.blending === NormalBlending && material.transparent === false )
+			? setBlending( NoBlending )
+			: setBlending( material.blending, material.blendEquation, material.blendSrc, material.blendDst, material.blendEquationAlpha, material.blendSrcAlpha, material.blendDstAlpha, material.premultipliedAlpha );
+
+		depthBuffer.setFunc( material.depthFunc );
+		depthBuffer.setTest( material.depthTest );
+		depthBuffer.setMask( material.depthWrite );
+		colorBuffer.setMask( material.colorWrite );
+
+		const stencilWrite = material.stencilWrite;
+		stencilBuffer.setTest( stencilWrite );
+		if ( stencilWrite ) {
+
+			stencilBuffer.setMask( material.stencilWriteMask );
+			stencilBuffer.setFunc( material.stencilFunc, material.stencilRef, material.stencilFuncMask );
+			stencilBuffer.setOp( material.stencilFail, material.stencilZFail, material.stencilZPass );
+
+		}
+
+		setPolygonOffset( material.polygonOffset, material.polygonOffsetFactor, material.polygonOffsetUnits );
+
+	}
+
+	//
+
+	function setFlipSided( flipSided ) {
 
 		if ( currentFlipSided !== flipSided ) {
 
@@ -377,60 +664,94 @@ THREE.WebGLState = function ( gl, extensions, paramThreeToGL ) {
 
 		}
 
-	};
+	}
 
-	this.setLineWidth = function ( width ) {
+	function setCullFace( cullFace ) {
+
+		if ( cullFace !== CullFaceNone ) {
+
+			enable( gl.CULL_FACE );
+
+			if ( cullFace !== currentCullFace ) {
+
+				if ( cullFace === CullFaceBack ) {
+
+					gl.cullFace( gl.BACK );
+
+				} else if ( cullFace === CullFaceFront ) {
+
+					gl.cullFace( gl.FRONT );
+
+				} else {
+
+					gl.cullFace( gl.FRONT_AND_BACK );
+
+				}
+
+			}
+
+		} else {
+
+			disable( gl.CULL_FACE );
+
+		}
+
+		currentCullFace = cullFace;
+
+	}
+
+	function setLineWidth( width ) {
 
 		if ( width !== currentLineWidth ) {
 
-			gl.lineWidth( width );
+			if ( lineWidthAvailable ) gl.lineWidth( width );
 
 			currentLineWidth = width;
 
 		}
 
-	};
+	}
 
-	this.setPolygonOffset = function ( polygonOffset, factor, units ) {
+	function setPolygonOffset( polygonOffset, factor, units ) {
 
 		if ( polygonOffset ) {
 
-			this.enable( gl.POLYGON_OFFSET_FILL );
+			enable( gl.POLYGON_OFFSET_FILL );
+
+			if ( currentPolygonOffsetFactor !== factor || currentPolygonOffsetUnits !== units ) {
+
+				gl.polygonOffset( factor, units );
+
+				currentPolygonOffsetFactor = factor;
+				currentPolygonOffsetUnits = units;
+
+			}
 
 		} else {
 
-			this.disable( gl.POLYGON_OFFSET_FILL );
+			disable( gl.POLYGON_OFFSET_FILL );
 
 		}
 
-		if ( polygonOffset && ( currentPolygonOffsetFactor !== factor || currentPolygonOffsetUnits !== units ) ) {
+	}
 
-			gl.polygonOffset( factor, units );
-
-			currentPolygonOffsetFactor = factor;
-			currentPolygonOffsetUnits = units;
-
-		}
-
-	};
-
-	this.setScissorTest = function ( scissorTest ) {
+	function setScissorTest( scissorTest ) {
 
 		if ( scissorTest ) {
 
-			this.enable( gl.SCISSOR_TEST );
+			enable( gl.SCISSOR_TEST );
 
 		} else {
 
-			this.disable( gl.SCISSOR_TEST );
+			disable( gl.SCISSOR_TEST );
 
 		}
 
-	};
+	}
 
 	// texture
 
-	this.activeTexture = function ( webglSlot ) {
+	function activeTexture( webglSlot ) {
 
 		if ( webglSlot === undefined ) webglSlot = gl.TEXTURE0 + maxTextures - 1;
 
@@ -443,15 +764,15 @@ THREE.WebGLState = function ( gl, extensions, paramThreeToGL ) {
 
 	}
 
-	this.bindTexture = function ( webglType, webglTexture ) {
+	function bindTexture( webglType, webglTexture ) {
 
-		if ( currentTextureSlot === undefined ) {
+		if ( currentTextureSlot === null ) {
 
-			_this.activeTexture();
+			activeTexture();
 
 		}
 
-		var boundTexture = currentBoundTextures[ currentTextureSlot ];
+		let boundTexture = currentBoundTextures[ currentTextureSlot ];
 
 		if ( boundTexture === undefined ) {
 
@@ -462,16 +783,31 @@ THREE.WebGLState = function ( gl, extensions, paramThreeToGL ) {
 
 		if ( boundTexture.type !== webglType || boundTexture.texture !== webglTexture ) {
 
-			gl.bindTexture( webglType, webglTexture );
+			gl.bindTexture( webglType, webglTexture || emptyTextures[ webglType ] );
 
 			boundTexture.type = webglType;
 			boundTexture.texture = webglTexture;
 
 		}
 
-	};
+	}
 
-	this.compressedTexImage2D = function () {
+	function unbindTexture() {
+
+		const boundTexture = currentBoundTextures[ currentTextureSlot ];
+
+		if ( boundTexture !== undefined && boundTexture.type !== undefined ) {
+
+			gl.bindTexture( boundTexture.type, null );
+
+			boundTexture.type = undefined;
+			boundTexture.texture = undefined;
+
+		}
+
+	}
+
+	function compressedTexImage2D() {
 
 		try {
 
@@ -479,13 +815,13 @@ THREE.WebGLState = function ( gl, extensions, paramThreeToGL ) {
 
 		} catch ( error ) {
 
-			console.error( error );
+			console.error( 'THREE.WebGLState:', error );
 
 		}
 
-	};
+	}
 
-	this.texImage2D = function () {
+	function texImage2D() {
 
 		try {
 
@@ -493,38 +829,123 @@ THREE.WebGLState = function ( gl, extensions, paramThreeToGL ) {
 
 		} catch ( error ) {
 
-			console.error( error );
+			console.error( 'THREE.WebGLState:', error );
 
 		}
 
-	};
+	}
+
+	function texImage3D() {
+
+		try {
+
+			gl.texImage3D.apply( gl, arguments );
+
+		} catch ( error ) {
+
+			console.error( 'THREE.WebGLState:', error );
+
+		}
+
+	}
 
 	//
 
-	this.reset = function () {
+	function scissor( scissor ) {
 
-		for ( var i = 0; i < enabledAttributes.length; i ++ ) {
+		if ( currentScissor.equals( scissor ) === false ) {
 
-			if ( enabledAttributes[ i ] === 1 ) {
-
-				gl.disableVertexAttribArray( i );
-				enabledAttributes[ i ] = 0;
-
-			}
+			gl.scissor( scissor.x, scissor.y, scissor.z, scissor.w );
+			currentScissor.copy( scissor );
 
 		}
 
-		capabilities = {};
+	}
 
-		compressedTextureFormats = null;
+	function viewport( viewport ) {
 
+		if ( currentViewport.equals( viewport ) === false ) {
+
+			gl.viewport( viewport.x, viewport.y, viewport.z, viewport.w );
+			currentViewport.copy( viewport );
+
+		}
+
+	}
+
+	//
+
+	function reset() {
+
+		enabledCapabilities = {};
+
+		currentTextureSlot = null;
+		currentBoundTextures = {};
+
+		currentProgram = null;
+
+		currentBlendingEnabled = null;
 		currentBlending = null;
-
-		currentDepthWrite = null;
-		currentColorWrite = null;
+		currentBlendEquation = null;
+		currentBlendSrc = null;
+		currentBlendDst = null;
+		currentBlendEquationAlpha = null;
+		currentBlendSrcAlpha = null;
+		currentBlendDstAlpha = null;
+		currentPremultipledAlpha = false;
 
 		currentFlipSided = null;
+		currentCullFace = null;
+
+		currentLineWidth = null;
+
+		currentPolygonOffsetFactor = null;
+		currentPolygonOffsetUnits = null;
+
+		colorBuffer.reset();
+		depthBuffer.reset();
+		stencilBuffer.reset();
+
+	}
+
+	return {
+
+		buffers: {
+			color: colorBuffer,
+			depth: depthBuffer,
+			stencil: stencilBuffer
+		},
+
+		enable: enable,
+		disable: disable,
+
+		useProgram: useProgram,
+
+		setBlending: setBlending,
+		setMaterial: setMaterial,
+
+		setFlipSided: setFlipSided,
+		setCullFace: setCullFace,
+
+		setLineWidth: setLineWidth,
+		setPolygonOffset: setPolygonOffset,
+
+		setScissorTest: setScissorTest,
+
+		activeTexture: activeTexture,
+		bindTexture: bindTexture,
+		unbindTexture: unbindTexture,
+		compressedTexImage2D: compressedTexImage2D,
+		texImage2D: texImage2D,
+		texImage3D: texImage3D,
+
+		scissor: scissor,
+		viewport: viewport,
+
+		reset: reset
 
 	};
 
-};
+}
+
+export { WebGLState };

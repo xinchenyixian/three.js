@@ -1,104 +1,97 @@
-/**
- * @author alteredq / http://alteredqualia.com/
- */
+import { Sphere } from '../math/Sphere.js';
+import { Ray } from '../math/Ray.js';
+import { Matrix4 } from '../math/Matrix4.js';
+import { Object3D } from '../core/Object3D.js';
+import { Vector3 } from '../math/Vector3.js';
+import { PointsMaterial } from '../materials/PointsMaterial.js';
+import { BufferGeometry } from '../core/BufferGeometry.js';
 
-THREE.Points = function ( geometry, material ) {
+const _inverseMatrix = new Matrix4();
+const _ray = new Ray();
+const _sphere = new Sphere();
+const _position = new Vector3();
 
-	THREE.Object3D.call( this );
+function Points( geometry = new BufferGeometry(), material = new PointsMaterial() ) {
+
+	Object3D.call( this );
 
 	this.type = 'Points';
 
-	this.geometry = geometry !== undefined ? geometry : new THREE.Geometry();
-	this.material = material !== undefined ? material : new THREE.PointsMaterial( { color: Math.random() * 0xffffff } );
+	this.geometry = geometry;
+	this.material = material;
 
-};
+	this.updateMorphTargets();
 
-THREE.Points.prototype = Object.create( THREE.Object3D.prototype );
-THREE.Points.prototype.constructor = THREE.Points;
+}
 
-THREE.Points.prototype.raycast = ( function () {
+Points.prototype = Object.assign( Object.create( Object3D.prototype ), {
 
-	var inverseMatrix = new THREE.Matrix4();
-	var ray = new THREE.Ray();
+	constructor: Points,
 
-	return function raycast( raycaster, intersects ) {
+	isPoints: true,
 
-		var object = this;
-		var geometry = object.geometry;
-		var threshold = raycaster.params.Points.threshold;
+	copy: function ( source ) {
 
-		inverseMatrix.getInverse( this.matrixWorld );
-		ray.copy( raycaster.ray ).applyMatrix4( inverseMatrix );
+		Object3D.prototype.copy.call( this, source );
 
-		if ( geometry.boundingBox !== null ) {
+		this.material = source.material;
+		this.geometry = source.geometry;
 
-			if ( ray.isIntersectionBox( geometry.boundingBox ) === false ) {
+		return this;
 
-				return;
+	},
 
-			}
+	raycast: function ( raycaster, intersects ) {
 
-		}
+		const geometry = this.geometry;
+		const matrixWorld = this.matrixWorld;
+		const threshold = raycaster.params.Points.threshold;
 
-		var localThreshold = threshold / ( ( this.scale.x + this.scale.y + this.scale.z ) / 3 );
-		var localThresholdSq = localThreshold * localThreshold;
-		var position = new THREE.Vector3();
+		// Checking boundingSphere distance to ray
 
-		function testPoint( point, index ) {
+		if ( geometry.boundingSphere === null ) geometry.computeBoundingSphere();
 
-			var rayPointDistanceSq = ray.distanceSqToPoint( point );
+		_sphere.copy( geometry.boundingSphere );
+		_sphere.applyMatrix4( matrixWorld );
+		_sphere.radius += threshold;
 
-			if ( rayPointDistanceSq < localThresholdSq ) {
+		if ( raycaster.ray.intersectsSphere( _sphere ) === false ) return;
 
-				var intersectPoint = ray.closestPointToPoint( point );
-				intersectPoint.applyMatrix4( object.matrixWorld );
+		//
 
-				var distance = raycaster.ray.origin.distanceTo( intersectPoint );
+		_inverseMatrix.copy( matrixWorld ).invert();
+		_ray.copy( raycaster.ray ).applyMatrix4( _inverseMatrix );
 
-				if ( distance < raycaster.near || distance > raycaster.far ) return;
+		const localThreshold = threshold / ( ( this.scale.x + this.scale.y + this.scale.z ) / 3 );
+		const localThresholdSq = localThreshold * localThreshold;
 
-				intersects.push( {
+		if ( geometry.isBufferGeometry ) {
 
-					distance: distance,
-					distanceToRay: Math.sqrt( rayPointDistanceSq ),
-					point: intersectPoint.clone(),
-					index: index,
-					face: null,
-					object: object
-
-				} );
-
-			}
-
-		}
-
-		if ( geometry instanceof THREE.BufferGeometry ) {
-
-			var index = geometry.index;
-			var attributes = geometry.attributes;
-			var positions = attributes.position.array;
+			const index = geometry.index;
+			const attributes = geometry.attributes;
+			const positionAttribute = attributes.position;
 
 			if ( index !== null ) {
 
-				var indices = index.array;
+				const indices = index.array;
 
-				for ( var i = 0, il = indices.length; i < il; i ++ ) {
+				for ( let i = 0, il = indices.length; i < il; i ++ ) {
 
-					var a = indices[ i ];
+					const a = indices[ i ];
 
-					position.fromArray( positions, a * 3 );
+					_position.fromBufferAttribute( positionAttribute, a );
 
-					testPoint( position, a );
+					testPoint( _position, a, localThresholdSq, matrixWorld, raycaster, intersects, this );
 
 				}
 
 			} else {
 
-				for ( var i = 0, l = positions.length / 3; i < l; i ++ ) {
+				for ( let i = 0, l = positionAttribute.count; i < l; i ++ ) {
 
-					position.fromArray( positions, i * 3 );
+					_position.fromBufferAttribute( positionAttribute, i );
 
-					testPoint( position, i );
+					testPoint( _position, i, localThresholdSq, matrixWorld, raycaster, intersects, this );
 
 				}
 
@@ -106,38 +99,87 @@ THREE.Points.prototype.raycast = ( function () {
 
 		} else {
 
-			var vertices = geometry.vertices;
+			console.error( 'THREE.Points.raycast() no longer supports THREE.Geometry. Use THREE.BufferGeometry instead.' );
 
-			for ( var i = 0, l = vertices.length; i < l; i ++ ) {
+		}
 
-				testPoint( vertices[ i ], i );
+	},
+
+	updateMorphTargets: function () {
+
+		const geometry = this.geometry;
+
+		if ( geometry.isBufferGeometry ) {
+
+			const morphAttributes = geometry.morphAttributes;
+			const keys = Object.keys( morphAttributes );
+
+			if ( keys.length > 0 ) {
+
+				const morphAttribute = morphAttributes[ keys[ 0 ] ];
+
+				if ( morphAttribute !== undefined ) {
+
+					this.morphTargetInfluences = [];
+					this.morphTargetDictionary = {};
+
+					for ( let m = 0, ml = morphAttribute.length; m < ml; m ++ ) {
+
+						const name = morphAttribute[ m ].name || String( m );
+
+						this.morphTargetInfluences.push( 0 );
+						this.morphTargetDictionary[ name ] = m;
+
+					}
+
+				}
+
+			}
+
+		} else {
+
+			const morphTargets = geometry.morphTargets;
+
+			if ( morphTargets !== undefined && morphTargets.length > 0 ) {
+
+				console.error( 'THREE.Points.updateMorphTargets() does not support THREE.Geometry. Use THREE.BufferGeometry instead.' );
 
 			}
 
 		}
 
-	};
+	}
 
-}() );
+} );
 
-THREE.Points.prototype.clone = function () {
+function testPoint( point, index, localThresholdSq, matrixWorld, raycaster, intersects, object ) {
 
-	return new this.constructor( this.geometry, this.material ).copy( this );
+	const rayPointDistanceSq = _ray.distanceSqToPoint( point );
 
-};
+	if ( rayPointDistanceSq < localThresholdSq ) {
 
-// Backwards compatibility
+		const intersectPoint = new Vector3();
 
-THREE.PointCloud = function ( geometry, material ) {
+		_ray.closestPointToPoint( point, intersectPoint );
+		intersectPoint.applyMatrix4( matrixWorld );
 
-	console.warn( 'THREE.PointCloud has been renamed to THREE.Points.' );
-	return new THREE.Points( geometry, material );
+		const distance = raycaster.ray.origin.distanceTo( intersectPoint );
 
-};
+		if ( distance < raycaster.near || distance > raycaster.far ) return;
 
-THREE.ParticleSystem = function ( geometry, material ) {
+		intersects.push( {
 
-	console.warn( 'THREE.ParticleSystem has been renamed to THREE.Points.' );
-	return new THREE.Points( geometry, material );
+			distance: distance,
+			distanceToRay: Math.sqrt( rayPointDistanceSq ),
+			point: intersectPoint,
+			index: index,
+			face: null,
+			object: object
 
-};
+		} );
+
+	}
+
+}
+
+export { Points };

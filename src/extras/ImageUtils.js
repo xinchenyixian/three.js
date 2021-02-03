@@ -1,53 +1,62 @@
-/**
- * @author alteredq / http://alteredqualia.com/
- * @author mrdoob / http://mrdoob.com/
- * @author Daosheng Mu / https://github.com/DaoshengMu/
- */
+let _canvas;
 
-THREE.ImageUtils = {
+const ImageUtils = {
 
-	crossOrigin: undefined,
+	getDataURL: function ( image ) {
 
-	loadTexture: function ( url, mapping, onLoad, onError ) {
+		if ( /^data:/i.test( image.src ) ) {
 
-		console.warn( 'THREE.ImageUtils.loadTexture is being deprecated. Use THREE.TextureLoader() instead.' );
+			return image.src;
 
-		var loader = new THREE.TextureLoader();
-		loader.setCrossOrigin( this.crossOrigin );
+		}
 
-		var texture = loader.load( url, onLoad, undefined, onError );
+		if ( typeof HTMLCanvasElement == 'undefined' ) {
 
-		if ( mapping ) texture.mapping = mapping;
+			return image.src;
 
-		return texture;
+		}
 
-	},
+		let canvas;
 
-	loadTextureCube: function ( urls, mapping, onLoad, onError ) {
+		if ( image instanceof HTMLCanvasElement ) {
 
-		console.warn( 'THREE.ImageUtils.loadTextureCube is being deprecated. Use THREE.CubeTextureLoader() instead.' );
+			canvas = image;
 
-		var loader = new THREE.CubeTextureLoader();
-		loader.setCrossOrigin( this.crossOrigin );
+		} else {
 
-		var texture = loader.load( urls, onLoad, undefined, onError );
+			if ( _canvas === undefined ) _canvas = document.createElementNS( 'http://www.w3.org/1999/xhtml', 'canvas' );
 
-		if ( mapping ) texture.mapping = mapping;
+			_canvas.width = image.width;
+			_canvas.height = image.height;
 
-		return texture;
+			const context = _canvas.getContext( '2d' );
 
-	},
+			if ( image instanceof ImageData ) {
 
-	loadCompressedTexture: function () {
+				context.putImageData( image, 0, 0 );
 
-		console.error( 'THREE.ImageUtils.loadCompressedTexture has been removed. Use THREE.DDSLoader instead.' )
+			} else {
 
-	},
+				context.drawImage( image, 0, 0, image.width, image.height );
 
-	loadCompressedTextureCube: function () {
+			}
 
-		console.error( 'THREE.ImageUtils.loadCompressedTextureCube has been removed. Use THREE.DDSLoader instead.' )
+			canvas = _canvas;
+
+		}
+
+		if ( canvas.width > 2048 || canvas.height > 2048 ) {
+
+			return canvas.toDataURL( 'image/jpeg', 0.6 );
+
+		} else {
+
+			return canvas.toDataURL( 'image/png' );
+
+		}
 
 	}
 
 };
+
+export { ImageUtils };

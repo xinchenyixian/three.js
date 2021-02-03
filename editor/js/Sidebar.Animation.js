@@ -1,114 +1,105 @@
-/**
- * @author mrdoob / http://mrdoob.com/
- */
+import { UIPanel, UIBreak, UISelect, UIButton, UIText, UINumber, UIRow } from './libs/ui.js';
 
-Sidebar.Animation = function ( editor ) {
+function SidebarAnimation( editor ) {
 
+	var strings = editor.strings;
 	var signals = editor.signals;
+	var mixer = editor.mixer;
 
-	var options = {};
-	var possibleAnimations = {};
-
-	var container = new UI.CollapsiblePanel();
-	container.setCollapsed( editor.config.getKey( 'ui/sidebar/animation/collapsed' ) );
-	container.onCollapsedChange( function ( boolean ) {
-
-		editor.config.setKey( 'ui/sidebar/animation/collapsed', boolean );
-
-	} );
-	container.setDisplay( 'none' );
-
-	container.addStatic( new UI.Text( 'Animation' ).setTextTransform( 'uppercase' ) );
-	container.add( new UI.Break() );
-
-	var animationsRow = new UI.Panel();
-	container.add( animationsRow );
-
-	/*
-
-	var animations = {};
-
-	signals.objectAdded.add( function ( object ) {
-
-		object.traverse( function ( child ) {
-
-			if ( child instanceof THREE.SkinnedMesh ) {
-
-				var material = child.material;
-
-				if ( material instanceof THREE.MeshFaceMaterial ) {
-
-					for ( var i = 0; i < material.materials.length; i ++ ) {
-
-						material.materials[ i ].skinning = true;
-
-					}
-
-				} else {
-
-					child.material.skinning = true;
-
-				}
-
-				animations[ child.id ] = new THREE.Animation( child, child.geometry.animation );
-
-			} else if ( child instanceof THREE.MorphAnimMesh ) {
-
-				var animation = new THREE.MorphAnimation( child );
-				animation.duration = 30;
-
-				// temporal hack for THREE.AnimationHandler
-				animation._play = animation.play;
-				animation.play = function () {
-					this._play();
-					THREE.AnimationHandler.play( this );
-				};
-				animation.resetBlendWeights = function () {};
-				animation.stop = function () {
-					this.pause();
-					THREE.AnimationHandler.stop( this );
-				};
-
-				animations[ child.id ] = animation;
-
-			}
-
-		} );
-
-	} );
+	var actions = {};
 
 	signals.objectSelected.add( function ( object ) {
 
-		container.setDisplay( 'none' );
+		if ( object !== null && object.animations.length > 0 ) {
 
-		if ( object instanceof THREE.SkinnedMesh || object instanceof THREE.MorphAnimMesh ) {
+			var animations = object.animations;
 
-			animationsRow.clear();
+			container.setDisplay( '' );
 
-			var animation = animations[ object.id ];
+			var options = {};
+			var firstAnimation;
 
-			var playButton = new UI.Button( 'Play' ).onClick( function () {
+			for ( var animation of animations ) {
 
-				animation.play();
+				if ( firstAnimation === undefined ) firstAnimation = animation.name;
 
-			} );
-			animationsRow.add( playButton );
+				actions[ animation.name ] = mixer.clipAction( animation, object );
+				options[ animation.name ] = animation.name;
 
-			var pauseButton = new UI.Button( 'Stop' ).onClick( function () {
+			}
 
-				animation.stop();
+			animationsSelect.setOptions( options );
+			animationsSelect.setValue( firstAnimation );
+			mixerTimeScaleNumber.setValue( mixer.timeScale );
 
-			} );
-			animationsRow.add( pauseButton );
+		} else {
 
-			container.setDisplay( 'block' );
+			container.setDisplay( 'none' );
 
 		}
 
 	} );
 
-	*/
+	signals.objectRemoved.add( function ( object ) {
+
+		if ( object !== null && object.animations.length > 0 ) {
+
+			mixer.uncacheRoot( object );
+
+		}
+
+	} );
+
+	function playAction() {
+
+		actions[ animationsSelect.getValue() ].play();
+
+	}
+
+	function stopAction() {
+
+		actions[ animationsSelect.getValue() ].stop();
+
+		signals.animationStopped.dispatch();
+
+	}
+
+	function changeTimeScale() {
+
+		mixer.timeScale = mixerTimeScaleNumber.getValue();
+
+	}
+
+	var container = new UIPanel();
+	container.setDisplay( 'none' );
+
+	container.add( new UIText( strings.getKey( 'sidebar/animations' ) ).setTextTransform( 'uppercase' ) );
+	container.add( new UIBreak() );
+	container.add( new UIBreak() );
+
+	//
+
+	var animationsRow = new UIRow();
+
+	var animationsSelect = new UISelect().setFontSize( '12px' );
+	animationsRow.add( animationsSelect );
+	animationsRow.add( new UIButton( strings.getKey( 'sidebar/animations/play' ) ).setMarginLeft( '4px' ).onClick( playAction ) );
+	animationsRow.add( new UIButton( strings.getKey( 'sidebar/animations/stop' ) ).setMarginLeft( '4px' ).onClick( stopAction ) );
+
+	container.add( animationsRow );
+
+	//
+
+	var mixerTimeScaleRow = new UIRow();
+	var mixerTimeScaleNumber = new UINumber( 0.5 ).setWidth( '60px' ).setRange( - 10, 10 ).onChange( changeTimeScale );
+
+	mixerTimeScaleRow.add( new UIText( strings.getKey( 'sidebar/animations/timescale' ) ).setWidth( '90px' ) );
+	mixerTimeScaleRow.add( mixerTimeScaleNumber );
+
+	container.add( mixerTimeScaleRow );
 
 	return container;
 
 }
+
+export { SidebarAnimation };

@@ -1,391 +1,684 @@
-/**
- *
- * A track bound to a real value in the scene graph.
- *
- * @author Ben Houston / http://clara.io/
- * @author David Sarno / http://lighthaus.us/
- */
+// Characters [].:/ are reserved for track binding syntax.
+const _RESERVED_CHARS_RE = '\\[\\]\\.:\\/';
+const _reservedRe = new RegExp( '[' + _RESERVED_CHARS_RE + ']', 'g' );
 
-THREE.PropertyBinding = function ( rootNode, trackName ) {
+// Attempts to allow node names from any language. ES5's `\w` regexp matches
+// only latin characters, and the unicode \p{L} is not yet supported. So
+// instead, we exclude reserved characters and match everything else.
+const _wordChar = '[^' + _RESERVED_CHARS_RE + ']';
+const _wordCharOrDot = '[^' + _RESERVED_CHARS_RE.replace( '\\.', '' ) + ']';
 
-	this.rootNode = rootNode;
-	this.trackName = trackName;
-	this.referenceCount = 0;
-	this.originalValue = null; // the value of the property before it was controlled by this binding
+// Parent directories, delimited by '/' or ':'. Currently unused, but must
+// be matched to parse the rest of the track name.
+const _directoryRe = /((?:WC+[\/:])*)/.source.replace( 'WC', _wordChar );
 
-	var parseResults = THREE.PropertyBinding.parseTrackName( trackName );
+// Target node. May contain word characters (a-zA-Z0-9_) and '.' or '-'.
+const _nodeRe = /(WCOD+)?/.source.replace( 'WCOD', _wordCharOrDot );
 
-	this.directoryName = parseResults.directoryName;
-	this.nodeName = parseResults.nodeName;
-	this.objectName = parseResults.objectName;
-	this.objectIndex = parseResults.objectIndex;
-	this.propertyName = parseResults.propertyName;
-	this.propertyIndex = parseResults.propertyIndex;
+// Object on target node, and accessor. May not contain reserved
+// characters. Accessor may contain any character except closing bracket.
+const _objectRe = /(?:\.(WC+)(?:\[(.+)\])?)?/.source.replace( 'WC', _wordChar );
 
-	this.node = THREE.PropertyBinding.findNode( rootNode, this.nodeName ) || rootNode;
+// Property and accessor. May not contain reserved characters. Accessor may
+// contain any non-bracket characters.
+const _propertyRe = /\.(WC+)(?:\[(.+)\])?/.source.replace( 'WC', _wordChar );
 
-	this.cumulativeValue = null;
-	this.cumulativeWeight = 0;
-};
+const _trackRe = new RegExp( ''
+	+ '^'
+	+ _directoryRe
+	+ _nodeRe
+	+ _objectRe
+	+ _propertyRe
+	+ '$'
+);
 
-THREE.PropertyBinding.prototype = {
+const _supportedObjectNames = [ 'material', 'materials', 'bones' ];
 
-	constructor: THREE.PropertyBinding,
+function Composite( targetGroup, path, optionalParsedPath ) {
 
-	reset: function() {
+	const parsedPath = optionalParsedPath || PropertyBinding.parseTrackName( path );
 
-		this.cumulativeValue = null;
-		this.cumulativeWeight = 0;
+	this._targetGroup = targetGroup;
+	this._bindings = targetGroup.subscribe_( path, parsedPath );
+
+}
+
+Object.assign( Composite.prototype, {
+
+	getValue: function ( array, offset ) {
+
+		this.bind(); // bind all binding
+
+		const firstValidIndex = this._targetGroup.nCachedObjects_,
+			binding = this._bindings[ firstValidIndex ];
+
+		// and only call .getValue on the first
+		if ( binding !== undefined ) binding.getValue( array, offset );
 
 	},
 
-	accumulate: function( value, weight ) {
+	setValue: function ( array, offset ) {
 
-		if ( ! this.isBound ) this.bind();
+		const bindings = this._bindings;
 
-		if ( this.cumulativeWeight === 0 ) {
+		for ( let i = this._targetGroup.nCachedObjects_, n = bindings.length; i !== n; ++ i ) {
 
-			if ( weight > 0 ) {
+			bindings[ i ].setValue( array, offset );
 
-				if ( this.cumulativeValue === null ) {
-					this.cumulativeValue = THREE.AnimationUtils.clone( value );
-				}
-				this.cumulativeWeight = weight;
+		}
 
-			}
+	},
+
+	bind: function () {
+
+		const bindings = this._bindings;
+
+		for ( let i = this._targetGroup.nCachedObjects_, n = bindings.length; i !== n; ++ i ) {
+
+			bindings[ i ].bind();
+
+		}
+
+	},
+
+	unbind: function () {
+
+		const bindings = this._bindings;
+
+		for ( let i = this._targetGroup.nCachedObjects_, n = bindings.length; i !== n; ++ i ) {
+
+			bindings[ i ].unbind();
+
+		}
+
+	}
+
+} );
+
+
+function PropertyBinding( rootNode, path, parsedPath ) {
+
+	this.path = path;
+	this.parsedPath = parsedPath || PropertyBinding.parseTrackName( path );
+
+	this.node = PropertyBinding.findNode( rootNode, this.parsedPath.nodeName ) || rootNode;
+
+	this.rootNode = rootNode;
+
+}
+
+Object.assign( PropertyBinding, {
+
+	Composite: Composite,
+
+	create: function ( root, path, parsedPath ) {
+
+		if ( ! ( root && root.isAnimationObjectGroup ) ) {
+
+			return new PropertyBinding( root, path, parsedPath );
 
 		} else {
 
-			var lerpAlpha = weight / ( this.cumulativeWeight + weight );
-			this.cumulativeValue = this.lerpValue( this.cumulativeValue, value, lerpAlpha );
-			this.cumulativeWeight += weight;
+			return new PropertyBinding.Composite( root, path, parsedPath );
 
 		}
 
 	},
 
-	unbind: function() {
+	/**
+	 * Replaces spaces with underscores and removes unsupported characters from
+	 * node names, to ensure compatibility with parseTrackName().
+	 *
+	 * @param {string} name Node name to be sanitized.
+	 * @return {string}
+	 */
+	sanitizeNodeName: function ( name ) {
 
-		if ( ! this.isBound ) return;
-
-		this.setValue( this.originalValue );
-
-		this.setValue = null;
-		this.getValue = null;
-		this.lerpValue = null;
-		this.equalsValue = null;
-		this.triggerDirty = null;
-		this.isBound = false;
+		return name.replace( /\s/g, '_' ).replace( _reservedRe, '' );
 
 	},
 
-	// bind to the real property in the scene graph, remember original value, memorize various accessors for speed/inefficiency
-	bind: function() {
+	parseTrackName: function ( trackName ) {
 
-		if ( this.isBound ) return;
+		const matches = _trackRe.exec( trackName );
 
-		var targetObject = this.node;
+		if ( ! matches ) {
 
- 		// ensure there is a value node
-		if ( ! targetObject ) {
-			console.error( "  trying to update node for track: " + this.trackName + " but it wasn't found." );
-			return;
+			throw new Error( 'PropertyBinding: Cannot parse trackName: ' + trackName );
+
 		}
 
-		if ( this.objectName ) {
-			// special case were we need to reach deeper into the hierarchy to get the face materials....
-			if ( this.objectName === "materials" ) {
-				if ( ! targetObject.material ) {
-					console.error( '  can not bind to material as node does not have a material', this );
-					return;
-				}
-				if ( ! targetObject.material.materials ) {
-					console.error( '  can not bind to material.materials as node.material does not have a materials array', this );
-					return;
-				}
-				targetObject = targetObject.material.materials;
-			} else if ( this.objectName === "bones" ) {
-				if ( ! targetObject.skeleton ) {
-					console.error( '  can not bind to bones as node does not have a skeleton', this );
-					return;
-				}
-				// potential future optimization: skip this if propertyIndex is already an integer, and convert the integer string to a true integer.
+		const results = {
+			// directoryName: matches[ 1 ], // (tschw) currently unused
+			nodeName: matches[ 2 ],
+			objectName: matches[ 3 ],
+			objectIndex: matches[ 4 ],
+			propertyName: matches[ 5 ], // required
+			propertyIndex: matches[ 6 ]
+		};
 
-				targetObject = targetObject.skeleton.bones;
+		const lastDot = results.nodeName && results.nodeName.lastIndexOf( '.' );
 
-				// support resolving morphTarget names into indices.
-				for ( var i = 0; i < targetObject.length; i ++ ) {
-					if ( targetObject[i].name === this.objectIndex ) {
-						this.objectIndex = i;
-						break;
-					}
-				}
-			} else {
+		if ( lastDot !== undefined && lastDot !== - 1 ) {
 
-				if ( targetObject[ this.objectName ] === undefined ) {
-					console.error( '  can not bind to objectName of node, undefined', this );
-					return;
-				}
-				targetObject = targetObject[ this.objectName ];
-			}
+			const objectName = results.nodeName.substring( lastDot + 1 );
 
-			if ( this.objectIndex !== undefined ) {
-				if ( targetObject[ this.objectIndex ] === undefined ) {
-					console.error( "  trying to bind to objectIndex of objectName, but is undefined:", this, targetObject );
-					return;
-				}
+			// Object names must be checked against an allowlist. Otherwise, there
+			// is no way to parse 'foo.bar.baz': 'baz' must be a property, but
+			// 'bar' could be the objectName, or part of a nodeName (which can
+			// include '.' characters).
+			if ( _supportedObjectNames.indexOf( objectName ) !== - 1 ) {
 
-				targetObject = targetObject[ this.objectIndex ];
+				results.nodeName = results.nodeName.substring( 0, lastDot );
+				results.objectName = objectName;
+
 			}
 
 		}
 
- 		// special case mappings
- 		var nodeProperty = targetObject[ this.propertyName ];
-		if ( ! nodeProperty ) {
-			console.error( "  trying to update property for track: " + this.nodeName + '.' + this.propertyName + " but it wasn't found.", targetObject );
-			return;
-		}
+		if ( results.propertyName === null || results.propertyName.length === 0 ) {
 
-		// access a sub element of the property array (only primitives are supported right now)
-		if ( this.propertyIndex !== undefined ) {
-
-			if ( this.propertyName === "morphTargetInfluences" ) {
-				// potential optimization, skip this if propertyIndex is already an integer, and convert the integer string to a true integer.
-
-				// support resolving morphTarget names into indices.
-				if ( ! targetObject.geometry ) {
-					console.error( '  can not bind to morphTargetInfluences becasuse node does not have a geometry', this );
-				}
-				if ( ! targetObject.geometry.morphTargets ) {
-					console.error( '  can not bind to morphTargetInfluences becasuse node does not have a geometry.morphTargets', this );
-				}
-
-				for ( var i = 0; i < this.node.geometry.morphTargets.length; i ++ ) {
-					if ( targetObject.geometry.morphTargets[i].name === this.propertyIndex ) {
-						this.propertyIndex = i;
-						break;
-					}
-				}
-			}
-
-			this.setValue = function setValue_propertyIndexed( value ) {
-				if ( ! this.equalsValue( nodeProperty[ this.propertyIndex ], value ) ) {
-					nodeProperty[ this.propertyIndex ] = value;
-					return true;
-				}
-				return false;
-			};
-
-			this.getValue = function getValue_propertyIndexed() {
-				return nodeProperty[ this.propertyIndex ];
-			};
-
-		}
-		// must use copy for Object3D.Euler/Quaternion
-		else if ( nodeProperty.copy ) {
-
-			this.setValue = function setValue_propertyObject( value ) {
-				if ( ! this.equalsValue( nodeProperty, value ) ) {
-					nodeProperty.copy( value );
-					return true;
-				}
-				return false;
-			}
-
-			this.getValue = function getValue_propertyObject() {
-				return nodeProperty;
-			};
-
-		}
-		// otherwise just set the property directly on the node (do not use nodeProperty as it may not be a reference object)
-		else {
-
-			this.setValue = function setValue_property( value ) {
-				if ( ! this.equalsValue( targetObject[ this.propertyName ], value ) ) {
-					targetObject[ this.propertyName ] = value;
-					return true;
-				}
-				return false;
-			}
-
-			this.getValue = function getValue_property() {
-				return targetObject[ this.propertyName ];
-			};
+			throw new Error( 'PropertyBinding: can not parse propertyName from trackName: ' + trackName );
 
 		}
 
-		// trigger node dirty
-		if ( targetObject.needsUpdate !== undefined ) { // material
-
-			this.triggerDirty = function triggerDirty_needsUpdate() {
-				this.node.needsUpdate = true;
-			}
-
-		} else if ( targetObject.matrixWorldNeedsUpdate !== undefined ) { // node transform
-
-			this.triggerDirty = function triggerDirty_matrixWorldNeedsUpdate() {
-				targetObject.matrixWorldNeedsUpdate = true;
-			}
-
-		}
-
-		this.originalValue = this.getValue();
-
-		this.equalsValue = THREE.AnimationUtils.getEqualsFunc( this.originalValue );
-		this.lerpValue = THREE.AnimationUtils.getLerpFunc( this.originalValue, true );
-
-		this.isBound = true;
+		return results;
 
 	},
 
-	apply: function() {
+	findNode: function ( root, nodeName ) {
 
-		// for speed capture the setter pattern as a closure (sort of a memoization pattern: https://en.wikipedia.org/wiki/Memoization)
-		if ( ! this.isBound ) this.bind();
+		if ( ! nodeName || nodeName === '' || nodeName === '.' || nodeName === - 1 || nodeName === root.name || nodeName === root.uuid ) {
 
-		// early exit if there is nothing to apply.
-		if ( this.cumulativeWeight > 0 ) {
-
-			// blend with original value
-			if ( this.cumulativeWeight < 1 ) {
-
-				var remainingWeight = 1 - this.cumulativeWeight;
-				var lerpAlpha = remainingWeight / ( this.cumulativeWeight + remainingWeight );
-				this.cumulativeValue = this.lerpValue( this.cumulativeValue, this.originalValue, lerpAlpha );
-
-			}
-
-			var valueChanged = this.setValue( this.cumulativeValue );
-
-			if ( valueChanged && this.triggerDirty ) {
-				this.triggerDirty();
-			}
-
-			// reset accumulator
-			this.cumulativeValue = null;
-			this.cumulativeWeight = 0;
+			return root;
 
 		}
-	}
 
-};
+		// search into skeleton bones.
+		if ( root.skeleton ) {
 
+			const bone = root.skeleton.getBoneByName( nodeName );
 
-THREE.PropertyBinding.parseTrackName = function( trackName ) {
-
-	// matches strings in the form of:
-	//    nodeName.property
-	//    nodeName.property[accessor]
-	//    nodeName.material.property[accessor]
-	//    uuid.property[accessor]
-	//    uuid.objectName[objectIndex].propertyName[propertyIndex]
-	//    parentName/nodeName.property
-	//    parentName/parentName/nodeName.property[index]
-	//	  .bone[Armature.DEF_cog].position
-	// created and tested via https://regex101.com/#javascript
-
-	var re = /^(([\w]+\/)*)([\w-\d]+)?(\.([\w]+)(\[([\w\d\[\]\_. ]+)\])?)?(\.([\w.]+)(\[([\w\d\[\]\_. ]+)\])?)$/;
-	var matches = re.exec(trackName);
-
-	if ( ! matches ) {
-		throw new Error( "cannot parse trackName at all: " + trackName );
-	}
-
-    if (matches.index === re.lastIndex) {
-        re.lastIndex++;
-    }
-
-	var results = {
-		directoryName: matches[1],
-		nodeName: matches[3], 	// allowed to be null, specified root node.
-		objectName: matches[5],
-		objectIndex: matches[7],
-		propertyName: matches[9],
-		propertyIndex: matches[11]	// allowed to be null, specifies that the whole property is set.
-	};
-
-	if ( results.propertyName === null || results.propertyName.length === 0 ) {
-		throw new Error( "can not parse propertyName from trackName: " + trackName );
-	}
-
-	return results;
-
-};
-
-THREE.PropertyBinding.findNode = function( root, nodeName ) {
-
-	function searchSkeleton( skeleton ) {
-
-		for ( var i = 0; i < skeleton.bones.length; i ++ ) {
-
-			var bone = skeleton.bones[i];
-
-			if ( bone.name === nodeName ) {
+			if ( bone !== undefined ) {
 
 				return bone;
 
 			}
+
 		}
 
-		return null;
+		// search into node subtree.
+		if ( root.children ) {
 
-	}
+			const searchNodeSubtree = function ( children ) {
 
-	function searchNodeSubtree( children ) {
+				for ( let i = 0; i < children.length; i ++ ) {
 
-		for ( var i = 0; i < children.length; i ++ ) {
+					const childNode = children[ i ];
 
-			var childNode = children[i];
+					if ( childNode.name === nodeName || childNode.uuid === nodeName ) {
 
-			if ( childNode.name === nodeName || childNode.uuid === nodeName ) {
+						return childNode;
 
-				return childNode;
+					}
+
+					const result = searchNodeSubtree( childNode.children );
+
+					if ( result ) return result;
+
+				}
+
+				return null;
+
+			};
+
+			const subTreeNode = searchNodeSubtree( root.children );
+
+			if ( subTreeNode ) {
+
+				return subTreeNode;
 
 			}
 
-			var result = searchNodeSubtree( childNode.children );
-
-			if ( result ) return result;
-
 		}
 
 		return null;
 
 	}
 
-	//
+} );
 
-	if ( ! nodeName || nodeName === "" || nodeName === "root" || nodeName === "." || nodeName === -1 || nodeName === root.name || nodeName === root.uuid ) {
+Object.assign( PropertyBinding.prototype, { // prototype, continued
 
-		return root;
+	// these are used to "bind" a nonexistent property
+	_getValue_unavailable: function () {},
+	_setValue_unavailable: function () {},
 
-	}
+	BindingType: {
+		Direct: 0,
+		EntireArray: 1,
+		ArrayElement: 2,
+		HasFromToArray: 3
+	},
 
-	// search into skeleton bones.
-	if ( root.skeleton ) {
+	Versioning: {
+		None: 0,
+		NeedsUpdate: 1,
+		MatrixWorldNeedsUpdate: 2
+	},
 
-		var bone = searchSkeleton( root.skeleton );
+	GetterByBindingType: [
 
-		if ( bone ) {
+		function getValue_direct( buffer, offset ) {
 
-			return bone;
+			buffer[ offset ] = this.node[ this.propertyName ];
+
+		},
+
+		function getValue_array( buffer, offset ) {
+
+			const source = this.resolvedProperty;
+
+			for ( let i = 0, n = source.length; i !== n; ++ i ) {
+
+				buffer[ offset ++ ] = source[ i ];
+
+			}
+
+		},
+
+		function getValue_arrayElement( buffer, offset ) {
+
+			buffer[ offset ] = this.resolvedProperty[ this.propertyIndex ];
+
+		},
+
+		function getValue_toArray( buffer, offset ) {
+
+			this.resolvedProperty.toArray( buffer, offset );
 
 		}
-	}
 
-	// search into node subtree.
-	if ( root.children ) {
+	],
 
-		var subTreeNode = searchNodeSubtree( root.children );
+	SetterByBindingTypeAndVersioning: [
 
-		if ( subTreeNode ) {
+		[
+			// Direct
 
-			return subTreeNode;
+			function setValue_direct( buffer, offset ) {
+
+				this.targetObject[ this.propertyName ] = buffer[ offset ];
+
+			},
+
+			function setValue_direct_setNeedsUpdate( buffer, offset ) {
+
+				this.targetObject[ this.propertyName ] = buffer[ offset ];
+				this.targetObject.needsUpdate = true;
+
+			},
+
+			function setValue_direct_setMatrixWorldNeedsUpdate( buffer, offset ) {
+
+				this.targetObject[ this.propertyName ] = buffer[ offset ];
+				this.targetObject.matrixWorldNeedsUpdate = true;
+
+			}
+
+		], [
+
+			// EntireArray
+
+			function setValue_array( buffer, offset ) {
+
+				const dest = this.resolvedProperty;
+
+				for ( let i = 0, n = dest.length; i !== n; ++ i ) {
+
+					dest[ i ] = buffer[ offset ++ ];
+
+				}
+
+			},
+
+			function setValue_array_setNeedsUpdate( buffer, offset ) {
+
+				const dest = this.resolvedProperty;
+
+				for ( let i = 0, n = dest.length; i !== n; ++ i ) {
+
+					dest[ i ] = buffer[ offset ++ ];
+
+				}
+
+				this.targetObject.needsUpdate = true;
+
+			},
+
+			function setValue_array_setMatrixWorldNeedsUpdate( buffer, offset ) {
+
+				const dest = this.resolvedProperty;
+
+				for ( let i = 0, n = dest.length; i !== n; ++ i ) {
+
+					dest[ i ] = buffer[ offset ++ ];
+
+				}
+
+				this.targetObject.matrixWorldNeedsUpdate = true;
+
+			}
+
+		], [
+
+			// ArrayElement
+
+			function setValue_arrayElement( buffer, offset ) {
+
+				this.resolvedProperty[ this.propertyIndex ] = buffer[ offset ];
+
+			},
+
+			function setValue_arrayElement_setNeedsUpdate( buffer, offset ) {
+
+				this.resolvedProperty[ this.propertyIndex ] = buffer[ offset ];
+				this.targetObject.needsUpdate = true;
+
+			},
+
+			function setValue_arrayElement_setMatrixWorldNeedsUpdate( buffer, offset ) {
+
+				this.resolvedProperty[ this.propertyIndex ] = buffer[ offset ];
+				this.targetObject.matrixWorldNeedsUpdate = true;
+
+			}
+
+		], [
+
+			// HasToFromArray
+
+			function setValue_fromArray( buffer, offset ) {
+
+				this.resolvedProperty.fromArray( buffer, offset );
+
+			},
+
+			function setValue_fromArray_setNeedsUpdate( buffer, offset ) {
+
+				this.resolvedProperty.fromArray( buffer, offset );
+				this.targetObject.needsUpdate = true;
+
+			},
+
+			function setValue_fromArray_setMatrixWorldNeedsUpdate( buffer, offset ) {
+
+				this.resolvedProperty.fromArray( buffer, offset );
+				this.targetObject.matrixWorldNeedsUpdate = true;
+
+			}
+
+		]
+
+	],
+
+	getValue: function getValue_unbound( targetArray, offset ) {
+
+		this.bind();
+		this.getValue( targetArray, offset );
+
+		// Note: This class uses a State pattern on a per-method basis:
+		// 'bind' sets 'this.getValue' / 'setValue' and shadows the
+		// prototype version of these methods with one that represents
+		// the bound state. When the property is not found, the methods
+		// become no-ops.
+
+	},
+
+	setValue: function getValue_unbound( sourceArray, offset ) {
+
+		this.bind();
+		this.setValue( sourceArray, offset );
+
+	},
+
+	// create getter / setter pair for a property in the scene graph
+	bind: function () {
+
+		let targetObject = this.node;
+		const parsedPath = this.parsedPath;
+
+		const objectName = parsedPath.objectName;
+		const propertyName = parsedPath.propertyName;
+		let propertyIndex = parsedPath.propertyIndex;
+
+		if ( ! targetObject ) {
+
+			targetObject = PropertyBinding.findNode( this.rootNode, parsedPath.nodeName ) || this.rootNode;
+
+			this.node = targetObject;
 
 		}
 
+		// set fail state so we can just 'return' on error
+		this.getValue = this._getValue_unavailable;
+		this.setValue = this._setValue_unavailable;
+
+		// ensure there is a value node
+		if ( ! targetObject ) {
+
+			console.error( 'THREE.PropertyBinding: Trying to update node for track: ' + this.path + ' but it wasn\'t found.' );
+			return;
+
+		}
+
+		if ( objectName ) {
+
+			let objectIndex = parsedPath.objectIndex;
+
+			// special cases were we need to reach deeper into the hierarchy to get the face materials....
+			switch ( objectName ) {
+
+				case 'materials':
+
+					if ( ! targetObject.material ) {
+
+						console.error( 'THREE.PropertyBinding: Can not bind to material as node does not have a material.', this );
+						return;
+
+					}
+
+					if ( ! targetObject.material.materials ) {
+
+						console.error( 'THREE.PropertyBinding: Can not bind to material.materials as node.material does not have a materials array.', this );
+						return;
+
+					}
+
+					targetObject = targetObject.material.materials;
+
+					break;
+
+				case 'bones':
+
+					if ( ! targetObject.skeleton ) {
+
+						console.error( 'THREE.PropertyBinding: Can not bind to bones as node does not have a skeleton.', this );
+						return;
+
+					}
+
+					// potential future optimization: skip this if propertyIndex is already an integer
+					// and convert the integer string to a true integer.
+
+					targetObject = targetObject.skeleton.bones;
+
+					// support resolving morphTarget names into indices.
+					for ( let i = 0; i < targetObject.length; i ++ ) {
+
+						if ( targetObject[ i ].name === objectIndex ) {
+
+							objectIndex = i;
+							break;
+
+						}
+
+					}
+
+					break;
+
+				default:
+
+					if ( targetObject[ objectName ] === undefined ) {
+
+						console.error( 'THREE.PropertyBinding: Can not bind to objectName of node undefined.', this );
+						return;
+
+					}
+
+					targetObject = targetObject[ objectName ];
+
+			}
+
+
+			if ( objectIndex !== undefined ) {
+
+				if ( targetObject[ objectIndex ] === undefined ) {
+
+					console.error( 'THREE.PropertyBinding: Trying to bind to objectIndex of objectName, but is undefined.', this, targetObject );
+					return;
+
+				}
+
+				targetObject = targetObject[ objectIndex ];
+
+			}
+
+		}
+
+		// resolve property
+		const nodeProperty = targetObject[ propertyName ];
+
+		if ( nodeProperty === undefined ) {
+
+			const nodeName = parsedPath.nodeName;
+
+			console.error( 'THREE.PropertyBinding: Trying to update property for track: ' + nodeName +
+				'.' + propertyName + ' but it wasn\'t found.', targetObject );
+			return;
+
+		}
+
+		// determine versioning scheme
+		let versioning = this.Versioning.None;
+
+		this.targetObject = targetObject;
+
+		if ( targetObject.needsUpdate !== undefined ) { // material
+
+			versioning = this.Versioning.NeedsUpdate;
+
+		} else if ( targetObject.matrixWorldNeedsUpdate !== undefined ) { // node transform
+
+			versioning = this.Versioning.MatrixWorldNeedsUpdate;
+
+		}
+
+		// determine how the property gets bound
+		let bindingType = this.BindingType.Direct;
+
+		if ( propertyIndex !== undefined ) {
+
+			// access a sub element of the property array (only primitives are supported right now)
+
+			if ( propertyName === 'morphTargetInfluences' ) {
+
+				// potential optimization, skip this if propertyIndex is already an integer, and convert the integer string to a true integer.
+
+				// support resolving morphTarget names into indices.
+				if ( ! targetObject.geometry ) {
+
+					console.error( 'THREE.PropertyBinding: Can not bind to morphTargetInfluences because node does not have a geometry.', this );
+					return;
+
+				}
+
+				if ( targetObject.geometry.isBufferGeometry ) {
+
+					if ( ! targetObject.geometry.morphAttributes ) {
+
+						console.error( 'THREE.PropertyBinding: Can not bind to morphTargetInfluences because node does not have a geometry.morphAttributes.', this );
+						return;
+
+					}
+
+					if ( targetObject.morphTargetDictionary[ propertyIndex ] !== undefined ) {
+
+						propertyIndex = targetObject.morphTargetDictionary[ propertyIndex ];
+
+					}
+
+
+				} else {
+
+					console.error( 'THREE.PropertyBinding: Can not bind to morphTargetInfluences on THREE.Geometry. Use THREE.BufferGeometry instead.', this );
+					return;
+
+				}
+
+			}
+
+			bindingType = this.BindingType.ArrayElement;
+
+			this.resolvedProperty = nodeProperty;
+			this.propertyIndex = propertyIndex;
+
+		} else if ( nodeProperty.fromArray !== undefined && nodeProperty.toArray !== undefined ) {
+
+			// must use copy for Object3D.Euler/Quaternion
+
+			bindingType = this.BindingType.HasFromToArray;
+
+			this.resolvedProperty = nodeProperty;
+
+		} else if ( Array.isArray( nodeProperty ) ) {
+
+			bindingType = this.BindingType.EntireArray;
+
+			this.resolvedProperty = nodeProperty;
+
+		} else {
+
+			this.propertyName = propertyName;
+
+		}
+
+		// select getter / setter
+		this.getValue = this.GetterByBindingType[ bindingType ];
+		this.setValue = this.SetterByBindingTypeAndVersioning[ bindingType ][ versioning ];
+
+	},
+
+	unbind: function () {
+
+		this.node = null;
+
+		// back to the prototype version of getValue / setValue
+		// note: avoiding to mutate the shape of 'this' via 'delete'
+		this.getValue = this._getValue_unbound;
+		this.setValue = this._setValue_unbound;
+
 	}
 
-	return null;
-}
+} );
+
+// DECLARE ALIAS AFTER assign prototype
+Object.assign( PropertyBinding.prototype, {
+
+	// initial state of these methods that calls 'bind'
+	_getValue_unbound: PropertyBinding.prototype.getValue,
+	_setValue_unbound: PropertyBinding.prototype.setValue,
+
+} );
+
+export { PropertyBinding };

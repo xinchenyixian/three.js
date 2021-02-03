@@ -1,27 +1,31 @@
-/**
- * @author mrdoob / http://mrdoob.com/
- */
-
-var Config = function () {
+function Config() {
 
 	var name = 'threejs-editor';
 
 	var storage = {
-		'autosave': true,
-		'theme': 'css/light.css',
+		'language': 'en',
+		'exportPrecision': 6,
 
-		'project/renderer': 'WebGLRenderer',
-		'project/renderer/antialias': true,
-		'project/renderer/shadows': true,
+		'autosave': true,
+
+		'project/title': '',
+		'project/editable': false,
 		'project/vr': false,
 
-		'ui/sidebar/animation/collapsed': true,
-		'ui/sidebar/geometry/collapsed': true,
-		'ui/sidebar/material/collapsed': true,
-		'ui/sidebar/object3d/collapsed': false,
-		'ui/sidebar/project/collapsed': true,
-		'ui/sidebar/scene/collapsed': false,
-		'ui/sidebar/script/collapsed': true
+		'project/renderer/antialias': true,
+		'project/renderer/shadows': true,
+		'project/renderer/shadowType': 1, // PCF
+		'project/renderer/physicallyCorrectLights': false,
+		'project/renderer/toneMapping': 0, // NoToneMapping
+		'project/renderer/toneMappingExposure': 1,
+
+		'settings/history': false,
+
+		'settings/shortcuts/translate': 'w',
+		'settings/shortcuts/rotate': 'e',
+		'settings/shortcuts/scale': 'r',
+		'settings/shortcuts/undo': 'z',
+		'settings/shortcuts/focus': 'f'
 	};
 
 	if ( window.localStorage[ name ] === undefined ) {
@@ -68,6 +72,8 @@ var Config = function () {
 
 		}
 
-	}
+	};
 
-};
+}
+
+export { Config };

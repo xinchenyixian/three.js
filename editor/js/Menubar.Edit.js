@@ -1,54 +1,95 @@
-/**
- * @author mrdoob / http://mrdoob.com/
- */
+import { UIPanel, UIRow, UIHorizontalRule } from './libs/ui.js';
 
-Menubar.Edit = function ( editor ) {
+import { AddObjectCommand } from './commands/AddObjectCommand.js';
+import { RemoveObjectCommand } from './commands/RemoveObjectCommand.js';
 
-	var container = new UI.Panel();
+function MenubarEdit( editor ) {
+
+	var strings = editor.strings;
+
+	var container = new UIPanel();
 	container.setClass( 'menu' );
 
-	var title = new UI.Panel();
+	var title = new UIPanel();
 	title.setClass( 'title' );
-	title.setTextContent( 'Edit' );
+	title.setTextContent( strings.getKey( 'menubar/edit' ) );
 	container.add( title );
 
-	var options = new UI.Panel();
+	var options = new UIPanel();
 	options.setClass( 'options' );
 	container.add( options );
 
 	// Undo
 
-	var option = new UI.Panel();
-	option.setClass( 'option' );
-	option.setTextContent( 'Undo' );
-	option.onClick( function () {
+	var undo = new UIRow();
+	undo.setClass( 'option' );
+	undo.setTextContent( strings.getKey( 'menubar/edit/undo' ) );
+	undo.onClick( function () {
 
-		editor.history.undo();
+		editor.undo();
 
 	} );
-	options.add( option );
+	options.add( undo );
 
 	// Redo
 
-	var option = new UI.Panel();
+	var redo = new UIRow();
+	redo.setClass( 'option' );
+	redo.setTextContent( strings.getKey( 'menubar/edit/redo' ) );
+	redo.onClick( function () {
+
+		editor.redo();
+
+	} );
+	options.add( redo );
+
+	// Clear History
+
+	var option = new UIRow();
 	option.setClass( 'option' );
-	option.setTextContent( 'Redo' );
+	option.setTextContent( strings.getKey( 'menubar/edit/clear_history' ) );
 	option.onClick( function () {
 
-		editor.history.redo();
+		if ( confirm( 'The Undo/Redo History will be cleared. Are you sure?' ) ) {
+
+			editor.history.clear();
+
+		}
 
 	} );
 	options.add( option );
 
+
+	editor.signals.historyChanged.add( function () {
+
+		var history = editor.history;
+
+		undo.setClass( 'option' );
+		redo.setClass( 'option' );
+
+		if ( history.undos.length == 0 ) {
+
+			undo.setClass( 'inactive' );
+
+		}
+
+		if ( history.redos.length == 0 ) {
+
+			redo.setClass( 'inactive' );
+
+		}
+
+	} );
+
 	// ---
 
-	options.add( new UI.HorizontalRule() );
+	options.add( new UIHorizontalRule() );
 
 	// Clone
 
-	var option = new UI.Panel();
+	var option = new UIRow();
 	option.setClass( 'option' );
-	option.setTextContent( 'Clone' );
+	option.setTextContent( strings.getKey( 'menubar/edit/clone' ) );
 	option.onClick( function () {
 
 		var object = editor.selected;
@@ -57,104 +98,96 @@ Menubar.Edit = function ( editor ) {
 
 		object = object.clone();
 
-		editor.addObject( object );
-		editor.select( object );
+		editor.execute( new AddObjectCommand( editor, object ) );
 
 	} );
 	options.add( option );
 
 	// Delete
 
-	var option = new UI.Panel();
+	var option = new UIRow();
 	option.setClass( 'option' );
-	option.setTextContent( 'Delete' );
+	option.setTextContent( strings.getKey( 'menubar/edit/delete' ) );
 	option.onClick( function () {
 
 		var object = editor.selected;
 
-		if ( confirm( 'Delete ' + object.name + '?' ) === false ) return;
+		if ( object !== null && object.parent !== null ) {
 
-		var parent = object.parent;
-		editor.removeObject( object );
-		editor.select( parent );
-
-	} );
-	options.add( option );
-
-	// Minify shaders
-
-	var option = new UI.Panel();
-	option.setClass( 'option' );
-	option.setTextContent( 'Minify Shaders' );
-	option.onClick( function() {
-
-		var root = editor.selected || editor.scene;
-
-		var errors = [];
-		var nMaterialsChanged = 0;
-
-		var path = [];
-
-		function getPath ( object ) {
-
-			path.length = 0;
-
-			var parent = object.parent;
-			if ( parent !== undefined ) getPath( parent );
-
-			path.push( object.name || object.uuid );
-
-			return path;
+			editor.execute( new RemoveObjectCommand( editor, object ) );
 
 		}
 
-		root.traverse( function ( object ) {
+	} );
+	options.add( option );
 
-			var material = object.material;
+	//
 
-			if ( material instanceof THREE.ShaderMaterial ) {
+	options.add( new UIHorizontalRule() );
 
-				try {
+	// Set textures to sRGB. See #15903
 
-					var shader = glslprep.minifyGlsl( [
-							material.vertexShader, material.fragmentShader ] );
+	var option = new UIRow();
+	option.setClass( 'option' );
+	option.setTextContent( strings.getKey( 'menubar/edit/fixcolormaps' ) );
+	option.onClick( function () {
 
-					material.vertexShader = shader[ 0 ];
-					material.fragmentShader = shader[ 1 ];
-
-					++nMaterialsChanged;
-
-				} catch ( e ) {
-
-					var path = getPath( object ).join( "/" );
-
-					if ( e instanceof glslprep.SyntaxError )
-
-						errors.push( path + ":" +
-								e.line + ":" + e.column + ": " + e.message );
-
-					else {
-
-						errors.push( path +
-								": Unexpected error (see console for details)." );
-
-						console.error( e.stack || e );
-
-					}
-
-				}
-
-			}
-
-		} );
-
-		window.alert( nMaterialsChanged +
-				" material(s) were changed.\n" + errors.join( "\n" ) );
+		editor.scene.traverse( fixColorMap );
 
 	} );
 	options.add( option );
 
+	var colorMaps = [ 'map', 'envMap', 'emissiveMap' ];
+
+	function fixColorMap( obj ) {
+
+		var material = obj.material;
+
+		if ( material !== undefined ) {
+
+			if ( Array.isArray( material ) === true ) {
+
+				for ( var i = 0; i < material.length; i ++ ) {
+
+					fixMaterial( material[ i ] );
+
+				}
+
+			} else {
+
+				fixMaterial( material );
+
+			}
+
+			editor.signals.sceneGraphChanged.dispatch();
+
+		}
+
+	}
+
+	function fixMaterial( material ) {
+
+		var needsUpdate = material.needsUpdate;
+
+		for ( var i = 0; i < colorMaps.length; i ++ ) {
+
+			var map = material[ colorMaps[ i ] ];
+
+			if ( map ) {
+
+				map.encoding = THREE.sRGBEncoding;
+				needsUpdate = true;
+
+			}
+
+		}
+
+		material.needsUpdate = needsUpdate;
+
+	}
 
 	return container;
 
-};
+}
+
+export { MenubarEdit };

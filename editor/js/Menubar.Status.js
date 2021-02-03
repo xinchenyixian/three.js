@@ -1,14 +1,18 @@
-/**
- * @author mrdoob / http://mrdoob.com/
- */
+import * as THREE from '../../build/three.module.js';
 
-Menubar.Status = function ( editor ) {
+import { UIPanel, UIText } from './libs/ui.js';
+import { UIBoolean } from './libs/ui.three.js';
 
-	var container = new UI.Panel();
+function MenubarStatus( editor ) {
+
+	var strings = editor.strings;
+
+	var container = new UIPanel();
 	container.setClass( 'menu right' );
 
-	var checkbox = new UI.Checkbox( editor.config.getKey( 'autosave' ) );
-	checkbox.onChange( function () {
+	var autosave = new UIBoolean( editor.config.getKey( 'autosave' ), strings.getKey( 'menubar/status/autosave' ) );
+	autosave.text.setColor( '#888' );
+	autosave.onChange( function () {
 
 		var value = this.getValue();
 
@@ -21,29 +25,27 @@ Menubar.Status = function ( editor ) {
 		}
 
 	} );
-	container.add( checkbox );
-
-	var text = new UI.Text( 'autosave' );
-	text.setClass( 'title' );
-	container.add( text );
+	container.add( autosave );
 
 	editor.signals.savingStarted.add( function () {
 
-		text.setTextDecoration( 'underline' );
+		autosave.text.setTextDecoration( 'underline' );
 
 	} );
 
 	editor.signals.savingFinished.add( function () {
 
-		text.setTextDecoration( 'none' );
+		autosave.text.setTextDecoration( 'none' );
 
 	} );
 
-	var version = new UI.Text( 'r' + THREE.REVISION );
+	var version = new UIText( 'r' + THREE.REVISION );
 	version.setClass( 'title' );
 	version.setOpacity( 0.5 );
 	container.add( version );
 
 	return container;
 
-};
+}
+
+export { MenubarStatus };
